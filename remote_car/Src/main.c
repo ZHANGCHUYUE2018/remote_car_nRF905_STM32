@@ -52,7 +52,7 @@
 #include "cmsis_os.h"
 
 /* USER CODE BEGIN Includes */
-#include "nRF905Handler.h"
+
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -64,6 +64,7 @@ DMA_HandleTypeDef hdma_spi1_rx;
 
 osThreadId defaultTaskHandle;
 osThreadId nRF905HandlerHandle;
+osTimerId nCarStatusHandle;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
@@ -78,6 +79,7 @@ static void MX_SPI1_Init(void);
 static void MX_RTC_Init(void);
 void StartDefaultTask(void const * argument);
 extern void startNRF905Trans(void const * argument);
+extern void queryCarStatus(void const * argument);
 
 /* USER CODE BEGIN PFP */
 /* Private function prototypes -----------------------------------------------*/
@@ -128,6 +130,11 @@ int main(void)
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
+
+  /* Create the timer(s) */
+  /* definition and creation of nCarStatus */
+  osTimerDef(nCarStatus, queryCarStatus);
+  nCarStatusHandle = osTimerCreate(osTimer(nCarStatus), osTimerPeriodic, NULL);
 
   /* USER CODE BEGIN RTOS_TIMERS */
   /* start timers, add new ones, ... */
