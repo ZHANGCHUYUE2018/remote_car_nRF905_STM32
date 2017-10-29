@@ -42,6 +42,19 @@ extern osMutexId nRF905OccupyHandle;
 #define CH_MSK_IN_CC_REG						0x01FF
 #define NRF905_DR_IN_STATUS_REG(status)			((status) & (0x01 << 5))
 
+typedef enum _nRF905Command {
+	NRF905_CMD_GET_STATUS = 0,
+	NRF905_CMD_SET_STATUS,
+	NRF905_CMD_MAX
+} nRF905CMD_t;
+
+typedef struct _CarStatus {
+	int16_t nFrontSpeed;
+	int16_t nRearSpeed;
+	int16_t nSteer;
+} CarStatus_t;
+static CarStatus_t tRemoteCarStatus;
+
 typedef enum _nRF905Modes {
 	NRF905_MODE_PWR_DOWN = 0,
 	NRF905_MODE_STD_BY,
@@ -51,9 +64,9 @@ typedef enum _nRF905Modes {
 } nRF905Mode_t;
 
 typedef struct _nRF905PinLevelInMode {
-	int32_t nPWR_UP_PIN;
-	int32_t nTRX_CE_PIN;
-	int32_t nTX_EN_PIN;
+	GPIO_PinState nPWR_UP_PIN;
+	GPIO_PinState nTRX_CE_PIN;
+	GPIO_PinState nTX_EN_PIN;
 } nRF905PinLevelInMode_t;
 
 // Pin status according to each nRF905 mode
@@ -76,7 +89,7 @@ typedef struct _nRF905Status {
 static nRF905Status_t tNRF905Status = {0, 0, 0, 0, 0, NRF905_MODE_PWR_DOWN};
 
 // MSB of CH_NO will always be 0
-static const unsigned char NRF905_CR_DEFAULT[] = { 0x4C, 0x0C, // F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
+static const uint8_t NRF905_CR_DEFAULT[] = { 0x4C, 0x0C, // F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
 		(NRF905_RX_ADDR_LEN << 4) | NRF905_TX_ADDR_LEN,	// 4 bytes RX & TX address;
 		NRF905_RX_PAYLOAD_LEN, NRF905_TX_PAYLOAD_LEN, // 16 bytes RX & TX package length;
 		0x00, 0x0C, 0x40, 0x08,	// RX address is the calculation result of CH_NO
@@ -138,10 +151,10 @@ static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pBuff, 
 
 // No set mode in low level APIs because if you set Standby mode
 // then after write SPI you don't know what to change back
-static int32_t nRF905SPI_WR_CMD(unsigned char unCMD, const unsigned char *pData, int32_t nDataLen) {
+static int32_t nRF905SPI_WR_CMD(uint8_t unCMD, const uint8_t *pData, int32_t nDataLen) {
 	int32_t nResult;
 	nRF905Mode_t tPreMode;
-	unsigned char* pBuff;
+	uint8_t* pBuff;
 	if (nDataLen > 0) {
 		pBuff = malloc(nDataLen + 1);
 		if (pBuff) {
@@ -164,7 +177,7 @@ static int32_t nRF905SPI_WR_CMD(unsigned char unCMD, const unsigned char *pData,
 static int32_t readStatusReg(void) {
 	int32_t nResult;
 	nRF905Mode_t tPreMode;
-	unsigned char unStatus;
+	uint8_t unStatus;
 	unStatus = NRF905_CMD_RC(1);
 	tPreMode = tNRF905Status.tNRF905CurrentMode;
 	setNRF905Mode(NRF905_MODE_STD_BY);
@@ -177,9 +190,9 @@ static int32_t readStatusReg(void) {
 	}
 }
 
-static int32_t readRxPayload(unsigned char* pBuff, int32_t nBuffLen) {
+static int32_t readRxPayload(uint8_t* pBuff, int32_t nBuffLen) {
 	int32_t nResult;
-	unsigned char unReadBuff[33];
+	uint8_t unReadBuff[33];
 	nRF905Mode_t tPreMode;
 	if ((nBuffLen > 0) && (nBuffLen < sizeof(unReadBuff))) {
 		unReadBuff[0] = NRF905_CMD_RTP;
@@ -194,10 +207,10 @@ static int32_t readRxPayload(unsigned char* pBuff, int32_t nBuffLen) {
 	}
 }
 
-int32_t readConfig(unsigned char unConfigAddr, unsigned char* pBuff, int32_t nBuffLen) {
+int32_t readConfig(uint8_t unConfigAddr, uint8_t* pBuff, int32_t nBuffLen) {
 	int32_t nResult;
 	nRF905Mode_t tPreMode;
-	unsigned char unReadBuff[33];
+	uint8_t unReadBuff[33];
 	if ((nBuffLen > 0) && (nBuffLen < sizeof(unReadBuff))) {
 		unReadBuff[0] = NRF905_CMD_RC(unConfigAddr);
 		tPreMode = tNRF905Status.tNRF905CurrentMode;
@@ -211,20 +224,20 @@ int32_t readConfig(unsigned char unConfigAddr, unsigned char* pBuff, int32_t nBu
 	}
 }
 
-static int32_t writeConfig(unsigned char unConfigAddr, const unsigned char* pBuff, int32_t nBuffLen) {
+static int32_t writeConfig(uint8_t unConfigAddr, const uint8_t* pBuff, int32_t nBuffLen) {
 	return nRF905SPI_WR_CMD(NRF905_CMD_WC(unConfigAddr), pBuff, nBuffLen);
 }
 
 static int32_t writeTxAddr(uint32_t unTxAddr) {
-	return nRF905SPI_WR_CMD(NRF905_CMD_WTA, (unsigned char*)(&unTxAddr), 4);
+	return nRF905SPI_WR_CMD(NRF905_CMD_WTA, (uint8_t*)(&unTxAddr), 4);
 }
 
 static int32_t writeRxAddr(uint32_t unRxAddr) {
-	return writeConfig(NRF905_RX_ADDRESS_IN_CR, (unsigned char*)(&unRxAddr), 4);
+	return writeConfig(NRF905_RX_ADDRESS_IN_CR, (uint8_t*)(&unRxAddr), 4);
 }
 
 // TX and RX address are already configured during hopping
-static int32_t writeTxPayload(unsigned char* pBuff, int32_t nBuffLen) {
+static int32_t writeTxPayload(uint8_t* pBuff, int32_t nBuffLen) {
 	return writeConfig(NRF905_CMD_WTP, pBuff, nBuffLen);
 }
 
@@ -233,13 +246,13 @@ static int32_t writeFastConfig(uint16_t unPA_PLL_CHN) {
 	nRF905Mode_t tPreMode;
 	tPreMode = tNRF905Status.tNRF905CurrentMode;
 	setNRF905Mode(NRF905_MODE_STD_BY);
-	nResult = nRF905SPIDataRW(&NRF905_SPI_CHN, (unsigned char *)(&unPA_PLL_CHN), 2);
+	nResult = nRF905SPIDataRW(&NRF905_SPI_CHN, (uint8_t *)(&unPA_PLL_CHN), 2);
 	setNRF905Mode(tPreMode);
 	return nResult;
 }
 
 static void readDataFromNRF905(void) {
-	static unsigned char unReadBuff[32];
+	static uint8_t unReadBuff[32];
 	static int32_t nStatusReg;
 
 	setNRF905Mode(NRF905_MODE_STD_BY);
@@ -256,15 +269,10 @@ static void readDataFromNRF905(void) {
 }
 
 int32_t nRF905DataReadyHandler(void) {
-	if (NRF905_MODE_BURST_RX == tNRF905Status.tNRF905CurrentMode) {
-		readDataFromNRF905();
-		return 0;
-	} else if (NRF905_MODE_BURST_TX == tNRF905Status.tNRF905CurrentMode) {
-		setNRF905Mode(NRF905_MODE_BURST_RX);
-		return 0;		
-	} else {
-		return (-1);
-	}
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	vTaskNotifyGiveFromISR(nRF905HandlerHandle, &xHigherPriorityTaskWoken);
+	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	return 0;
 }
 
 static int32_t nRF905CRInitial(void) {
@@ -304,12 +312,25 @@ int32_t nRF905Initial(void) {
 	return 0;
 }
 
-int32_t nRF905SendFrame(unsigned char* pReadBuff, int32_t nBuffLen) {
+int32_t nRF905SendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
+	uint32_t ulNotificationValue;
+	
 	setNRF905Mode(NRF905_MODE_STD_BY);
-	writeTxPayload(pReadBuff, nBuffLen);
+	writeTxPayload(pTxBuff, nTxBuffLen);
 	setNRF905Mode(NRF905_MODE_BURST_TX);
 	tNRF905Status.unNRF905SendFrameCNT++;
-	return 0;
+	ulNotificationValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(50));
+	// Timeout or transmit done, I don't care
+	setNRF905Mode(NRF905_MODE_BURST_RX);
+	ulNotificationValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(200));
+	if( ulNotificationValue == 1 ) {
+		/* Something received. */
+		readRxPayload(pRxBuff, nRxBuffLen);
+		return 0;
+	} else {
+		/* The call to ulTaskNotifyTake() timed out. */
+		return (-1);
+	}
 }
 
 uint32_t getNRF905StatusRecvFrameCNT(void) {
@@ -337,7 +358,12 @@ uint32_t getNRF905StatusHoppingCNT(void) {
 }
 
 void queryCarStatus(void const * argument) {
+	uint8_t unCmd = NRF905_CMD_GET_STATUS;
+	uint8_t unReadFrame[sizeof(CarStatus_t)];
 	
+	if (nRF905SendFrame(&unCmd, sizeof(unCmd), unReadFrame, sizeof(unReadFrame)) == 0) {
+		tRemoteCarStatus = *((CarStatus_t*)unReadFrame);
+	}
 }
 
 void startNRF905Trans(void const * argument) {

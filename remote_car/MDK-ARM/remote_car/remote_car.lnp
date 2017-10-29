@@ -14,6 +14,7 @@
 "remote_car\main.o"
 "remote_car\stm32f1xx_hal_msp.o"
 "remote_car\nrf905handler.o"
+"remote_car\user_gpio_exti_irqhandler.o"
 "remote_car\stm32f1xx_hal_rcc.o"
 "remote_car\stm32f1xx_hal_rtc.o"
 "remote_car\stm32f1xx_hal_dma.o"
