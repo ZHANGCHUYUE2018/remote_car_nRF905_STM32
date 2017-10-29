@@ -1,29 +1,22 @@
+#include "main.h"
 #include "stm32f1xx_hal.h"
 #include "cmsis_os.h"
+
+#include <stdlib.h>
+#include <string.h>
 
 extern osThreadId nRF905HandlerHandle;
 extern osTimerId nCarStatusHandle;
 extern SPI_HandleTypeDef hspi1;
+extern osMutexId nRF905OccupyHandle;
 
 #define NRF905_SPI_CHN					hspi1
-#define NRF905_SPEED					8000000
-
-
-#define NRF905_TX_EN_PIN				0
-#define NRF905_TRX_CE_PIN				2
-#define NRF905_PWR_UP_PIN				3
-#define NRF905_DR_PIN					4
+#define NRF905_POWER					3
 
 #define NRF905_TX_ADDR_LEN				4
 #define NRF905_RX_ADDR_LEN				4
 #define NRF905_RX_PAYLOAD_LEN			32
 #define NRF905_TX_PAYLOAD_LEN			NRF905_RX_PAYLOAD_LEN
-
-typedef enum _RF_CMD {
-	RF_READ_SENSOR_VALUE = 0,
-	RF_WRITE_MOTOR_PAR,
-	RF_CMD_FAILED
-}RF_Command_t;
 
 /* Here is how the RF works:
  * UP keeps monitoring if there is any valid frame available (CD, AM, DR should be all SET) on certain channel for 300ms.
@@ -49,8 +42,6 @@ typedef enum _RF_CMD {
 #define CH_MSK_IN_CC_REG						0x01FF
 #define NRF905_DR_IN_STATUS_REG(status)			((status) & (0x01 << 5))
 
-#define NRF905STATUS_LOCK						111
-
 typedef enum _nRF905Modes {
 	NRF905_MODE_PWR_DOWN = 0,
 	NRF905_MODE_STD_BY,
@@ -67,18 +58,18 @@ typedef struct _nRF905PinLevelInMode {
 
 // Pin status according to each nRF905 mode
 static const nRF905PinLevelInMode_t unNRF905MODE_PIN_LEVEL[] = {
-		{ LOW, LOW, LOW},
-		{ HIGH, LOW, LOW },
-		{ HIGH, HIGH, LOW },
-		{ HIGH, HIGH, HIGH } };
+		{ GPIO_PIN_RESET, GPIO_PIN_RESET, GPIO_PIN_RESET},
+		{ GPIO_PIN_SET, GPIO_PIN_RESET, GPIO_PIN_RESET },
+		{ GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_RESET },
+		{ GPIO_PIN_SET, GPIO_PIN_SET, GPIO_PIN_SET } };
 
 typedef struct _nRF905Status {
-	unsigned int32_t unNRF905RecvFrameCNT;
-	unsigned int32_t unNRF905SendFrameCNT;
-	unsigned int32_t unNRF905HoppingCNT;
-	unsigned int32_t unNRF905TxAddr;
-	unsigned int32_t unNRF905RxAddr;
-	unsigned short int32_t unNRF905CHN_PWR;
+	uint32_t unNRF905RecvFrameCNT;
+	uint32_t unNRF905SendFrameCNT;
+	uint32_t unNRF905HoppingCNT;
+	uint32_t unNRF905TxAddr;
+	uint32_t unNRF905RxAddr;
+	uint16_t unNRF905CHN_PWR;
 	nRF905Mode_t tNRF905CurrentMode;
 }nRF905Status_t;
 
@@ -91,36 +82,38 @@ static const unsigned char NRF905_CR_DEFAULT[] = { 0x4C, 0x0C, // F=(422.4+(0x6C
 		0x00, 0x0C, 0x40, 0x08,	// RX address is the calculation result of CH_NO
 		0x58 };	// 16MHz crystal; enable CRC; CRC16
 
-static int32_t nRF905SPI_CHN = 0;
 static int32_t nRF905PipeFd[2];
-static unsigned short int32_t* pRoamingTable;
+static uint16_t* pRoamingTable;
 static int32_t nRoamingTableLen;
-static unsigned char unNRF905Power;
-
-static int32_t regDR_Event(nRF905Mode_t tNRF905Mode);
 
 static int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode) {
 	if (tNRF905Mode >= NRF905_MODE_MAX){
-		NRF905_LOG_ERR("nRF905 Mode error.");
+		//NRF905_LOG_ERR("nRF905 Mode error.");
 		return (-1);
 	}
 	if (tNRF905Mode == tNRF905Status.tNRF905CurrentMode){
-		NRF905_LOG_INFO("nRF905 Mode not changed, no need to set pin.");
+		//NRF905_LOG_INFO("nRF905 Mode not changed, no need to set pin.");
 		return 0;
 	}
 
-	digitalWrite(NRF905_TX_EN_PIN, unNRF905MODE_PIN_LEVEL[tNRF905Mode].nTX_EN_PIN);
-	digitalWrite(NRF905_TRX_CE_PIN, unNRF905MODE_PIN_LEVEL[tNRF905Mode].nTRX_CE_PIN);
-	digitalWrite(NRF905_PWR_UP_PIN, unNRF905MODE_PIN_LEVEL[tNRF905Mode].nPWR_UP_PIN);
+	HAL_GPIO_WritePin(NRF905_TX_EN_GPIO_Port, NRF905_TX_EN_Pin, unNRF905MODE_PIN_LEVEL[tNRF905Mode].nTX_EN_PIN);
+	HAL_GPIO_WritePin(NRF905_TRX_CE_GPIO_Port, NRF905_TRX_CE_Pin, unNRF905MODE_PIN_LEVEL[tNRF905Mode].nTRX_CE_PIN);
+	HAL_GPIO_WritePin(NRF905_PWR_UP_GPIO_Port, NRF905_PWR_UP_Pin, unNRF905MODE_PIN_LEVEL[tNRF905Mode].nPWR_UP_PIN);
 	tNRF905Status.tNRF905CurrentMode = tNRF905Mode;
 
 	return 0;
 }
 
+void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	vTaskNotifyGiveFromISR(nRF905HandlerHandle, &xHigherPriorityTaskWoken);
+	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
 static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pBuff, uint8_t unBuffLen) {
 	uint8_t* pRxBuff = NULL;
 	uint32_t ulNotificationValue;
-	const TickType_t xMaxBlockTime = pdMS_TO_TICKS( 200 );
+	const TickType_t xMaxBlockTime = pdMS_TO_TICKS(200);
 	
 	pRxBuff = malloc(unBuffLen);
 	if (NULL == pRxBuff) {
@@ -130,7 +123,7 @@ static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pBuff, 
 		ulNotificationValue = ulTaskNotifyTake( pdTRUE, xMaxBlockTime );
 		if( ulNotificationValue == 1 ) {
 			/* The transmission ended as expected. */
-			memcpy(pBuff, pRxBuff, unBuffLen):
+			memcpy(pBuff, pRxBuff, unBuffLen);
 			free(pRxBuff);
 			return 0;
 		} else {
@@ -222,11 +215,11 @@ static int32_t writeConfig(unsigned char unConfigAddr, const unsigned char* pBuf
 	return nRF905SPI_WR_CMD(NRF905_CMD_WC(unConfigAddr), pBuff, nBuffLen);
 }
 
-static int32_t writeTxAddr(unsigned int32_t unTxAddr) {
+static int32_t writeTxAddr(uint32_t unTxAddr) {
 	return nRF905SPI_WR_CMD(NRF905_CMD_WTA, (unsigned char*)(&unTxAddr), 4);
 }
 
-static int32_t writeRxAddr(unsigned int32_t unRxAddr) {
+static int32_t writeRxAddr(uint32_t unRxAddr) {
 	return writeConfig(NRF905_RX_ADDRESS_IN_CR, (unsigned char*)(&unRxAddr), 4);
 }
 
@@ -235,7 +228,7 @@ static int32_t writeTxPayload(unsigned char* pBuff, int32_t nBuffLen) {
 	return writeConfig(NRF905_CMD_WTP, pBuff, nBuffLen);
 }
 
-static int32_t writeFastConfig(unsigned short int32_t unPA_PLL_CHN) {
+static int32_t writeFastConfig(uint16_t unPA_PLL_CHN) {
 	int32_t nResult;
 	nRF905Mode_t tPreMode;
 	tPreMode = tNRF905Status.tNRF905CurrentMode;
@@ -243,20 +236,6 @@ static int32_t writeFastConfig(unsigned short int32_t unPA_PLL_CHN) {
 	nResult = nRF905SPIDataRW(&NRF905_SPI_CHN, (unsigned char *)(&unPA_PLL_CHN), 2);
 	setNRF905Mode(tPreMode);
 	return nResult;
-}
-
-static int32_t setChannelMonitorTimer(void) {
-	struct itimerval tChannelMonitorTimer;  /* for setting itimer */
-	tChannelMonitorTimer.it_value.tv_sec = 1;
-	tChannelMonitorTimer.it_value.tv_usec = 0;
-	tChannelMonitorTimer.it_interval.tv_sec = 1;
-	tChannelMonitorTimer.it_interval.tv_usec = 0;
-	return setitimer(ITIMER_REAL, &tChannelMonitorTimer, NULL);
-}
-
-static void switchNRF905ToRecv(void) {
-	setNRF905Mode(NRF905_MODE_BURST_RX);
-	regDR_Event(NRF905_MODE_BURST_RX);
 }
 
 static void readDataFromNRF905(void) {
@@ -270,36 +249,33 @@ static void readDataFromNRF905(void) {
 		// Strange happens, do something?
 	} else {
 		// reset monitor timer since communication seems OK
-		setChannelMonitorTimer();
-		piLock(NRF905STATUS_LOCK);
 		tNRF905Status.unNRF905RecvFrameCNT++;
-		piUnlock(NRF905STATUS_LOCK);
 		readRxPayload(unReadBuff, sizeof(unReadBuff));
-		if (write(nRF905PipeFd[1], unReadBuff, sizeof(unReadBuff)) != sizeof(unReadBuff)) {
-			NRF905_LOG_ERR("Write nRF905 pipe error");
-		}
 	}
-	switchNRF905ToRecv();
+	setNRF905Mode(NRF905_MODE_BURST_RX);
 }
 
-static int32_t regDR_Event(nRF905Mode_t tNRF905Mode) {
-	if (NRF905_MODE_BURST_RX == tNRF905Mode) {
-		wiringPiISR (NRF905_DR_PIN, INT_EDGE_RISING, &readDataFromNRF905) ;
-	} else if (NRF905_MODE_BURST_TX == tNRF905Mode) {
-		wiringPiISR (NRF905_DR_PIN, INT_EDGE_RISING, &switchNRF905ToRecv) ;
+int32_t nRF905DataReadyHandler(void) {
+	if (NRF905_MODE_BURST_RX == tNRF905Status.tNRF905CurrentMode) {
+		readDataFromNRF905();
+		return 0;
+	} else if (NRF905_MODE_BURST_TX == tNRF905Status.tNRF905CurrentMode) {
+		setNRF905Mode(NRF905_MODE_BURST_RX);
+		return 0;		
+	} else {
+		return (-1);
 	}
-	return 0;
 }
 
-static int32_t nRF905CRInitial(int32_t nRF905SPI_Fd) {
+static int32_t nRF905CRInitial(void) {
 	return writeConfig(0, NRF905_CR_DEFAULT, sizeof(NRF905_CR_DEFAULT));
 }
 
-static unsigned int32_t getTxAddrFromChnPwr(unsigned int32_t unNRF905CHN_PWR) {
+static uint32_t getTxAddrFromChnPwr(uint32_t unNRF905CHN_PWR) {
 	return ((unNRF905CHN_PWR | (unNRF905CHN_PWR << 16)) & 0xA33D59AA);
 }
 
-static unsigned int32_t getRxAddrFromChnPwr(unsigned short int32_t unNRF905CHN_PWR) {
+static uint32_t getRxAddrFromChnPwr(uint16_t unNRF905CHN_PWR) {
 	return ((unNRF905CHN_PWR | (unNRF905CHN_PWR << 16)) & 0x5CA259AA);
 }
 
@@ -309,128 +285,54 @@ static void roamNRF905(void) {
 	static int32_t nHoppingPoint = 0;
 
 	setNRF905Mode(NRF905_MODE_STD_BY);
-	piLock(NRF905STATUS_LOCK);
-	tNRF905Status.unNRF905CHN_PWR = GET_CHN_PWR_FAST_CONFIG(pRoamingTable[nHoppingPoint], unNRF905Power);
+	tNRF905Status.unNRF905CHN_PWR = GET_CHN_PWR_FAST_CONFIG(pRoamingTable[nHoppingPoint], NRF905_POWER);
 	(nHoppingPoint < (nRoamingTableLen - 1)) ? (nHoppingPoint++):(nHoppingPoint = 0);
 	tNRF905Status.unNRF905HoppingCNT++;
 	tNRF905Status.unNRF905TxAddr = getTxAddrFromChnPwr(tNRF905Status.unNRF905CHN_PWR);
 	tNRF905Status.unNRF905RxAddr = getRxAddrFromChnPwr(tNRF905Status.unNRF905CHN_PWR);
-	piUnlock(NRF905STATUS_LOCK);
 	writeFastConfig(tNRF905Status.unNRF905CHN_PWR);
 	writeTxAddr(tNRF905Status.unNRF905TxAddr);
 	writeRxAddr(tNRF905Status.unNRF905RxAddr);
-	switchNRF905ToRecv();
-}
-
-int32_t nRF905Initial(int32_t nSPI_Channel, int32_t nSPI_Speed, unsigned char unPower) {
-	int32_t nRF905SPI_Fd;
-	wiringPiSetup();
-	(void)piHiPri(10);
-
-	unNRF905Power = unPower;
-	pinMode(NRF905_TX_EN_PIN, OUTPUT);
-	pinMode(NRF905_TRX_CE_PIN, OUTPUT);
-	pinMode(NRF905_PWR_UP_PIN, OUTPUT);
-	pinMode(NRF905_DR_PIN, INPUT);
-	setNRF905Mode(NRF905_MODE_STD_BY);
-	nRF905SPI_Fd = wiringPiSPISetup(nSPI_Channel, nSPI_Speed);
-	if (nRF905SPI_Fd < 0) {
-		NRF905_LOG_ERR("nRF905 SPI initial error.");
-		return (-1);
-	}
-	usleep(3000);
-	nRF905SPI_CHN = nSPI_Channel;
-	nRF905CRInitial(nRF905SPI_Fd);
-
-	return 0;
-}
-
-int32_t nRF905StartListen(const unsigned short int32_t* pHoppingTable, int32_t nTableLen) {
-	// generate pip
-	if (nRF905PipeFd[0] != 0) {
-		close(nRF905PipeFd[0]);
-	}
-	if (nRF905PipeFd[1] != 0) {
-		close(nRF905PipeFd[1]);
-	}
-	if (pipe(nRF905PipeFd) != 0) {
-		NRF905_LOG_ERR("nRF905 pipe initial error.");
-		return (-1);
-	}
-	pRoamingTable = pHoppingTable;
-	nRoamingTableLen = nTableLen;
-	// Set nRF905 in RX mode
 	setNRF905Mode(NRF905_MODE_BURST_RX);
-	// register ISR to handle data receive when DR rise edge
-	regDR_Event(NRF905_MODE_BURST_RX);
+}
 
-	// start timer to watch communication, if do RX during 1s, start hopping
-	if (signal(SIGALRM, (void (*)(int32_t)) roamNRF905) == SIG_ERR) {
-		NRF905_LOG_ERR("Unable to catch SIGALRM");
-		close(nRF905PipeFd[0]);
-		close(nRF905PipeFd[1]);
-		return (-1);
-	}
-	raise(SIGALRM);
-
-	if (setChannelMonitorTimer() != 0) {
-		NRF905_LOG_ERR("error calling setitimer()");
-		close(nRF905PipeFd[0]);
-		close(nRF905PipeFd[1]);
-		return (-1);
-	}
+int32_t nRF905Initial(void) {
+	setNRF905Mode(NRF905_MODE_STD_BY);
+	vTaskDelay(pdMS_TO_TICKS(3));
+	nRF905CRInitial();
 
 	return 0;
-}
-
-void setNRF905Power(unsigned char unPower) {
-	unNRF905Power = unPower;
-}
-
-// Block operation until there is any data in the pipe which was written in Data ready ISR
-int32_t nRF905ReadFrame(unsigned char* pReadBuff, int32_t nBuffLen) {
-	return read(nRF905PipeFd[0], pReadBuff, nBuffLen);
 }
 
 int32_t nRF905SendFrame(unsigned char* pReadBuff, int32_t nBuffLen) {
 	setNRF905Mode(NRF905_MODE_STD_BY);
 	writeTxPayload(pReadBuff, nBuffLen);
 	setNRF905Mode(NRF905_MODE_BURST_TX);
-	regDR_Event(NRF905_MODE_BURST_TX);
-	piLock(NRF905STATUS_LOCK);
 	tNRF905Status.unNRF905SendFrameCNT++;
-	piUnlock(NRF905STATUS_LOCK);
 	return 0;
 }
 
-int32_t nRF905StopListen(void) {
-	setNRF905Mode(NRF905_MODE_STD_BY);
-	close(nRF905PipeFd[0]);
-	close(nRF905PipeFd[1]);
-	return 0;
-}
-
-unsigned int32_t getNRF905StatusRecvFrameCNT(void) {
-	unsigned int32_t unNRF905RecvFrameCNT;
-	piLock(NRF905STATUS_LOCK);
+uint32_t getNRF905StatusRecvFrameCNT(void) {
+	uint32_t unNRF905RecvFrameCNT;
+	osMutexWait(nRF905OccupyHandle, 0);
 	unNRF905RecvFrameCNT = tNRF905Status.unNRF905RecvFrameCNT;
-	piUnlock(NRF905STATUS_LOCK);
+	osMutexRelease(nRF905OccupyHandle);
 	return unNRF905RecvFrameCNT;
 }
 
-unsigned int32_t getNRF905StatusSendFrameCNT(void) {
-	unsigned int32_t unNRF905SendFrameCNT;
-	piLock(NRF905STATUS_LOCK);
+uint32_t getNRF905StatusSendFrameCNT(void) {
+	uint32_t unNRF905SendFrameCNT;
+	osMutexWait(nRF905OccupyHandle, 0);
 	unNRF905SendFrameCNT = tNRF905Status.unNRF905SendFrameCNT;
-	piUnlock(NRF905STATUS_LOCK);
+	osMutexRelease(nRF905OccupyHandle);
 	return unNRF905SendFrameCNT;
 }
 
-unsigned int32_t getNRF905StatusHoppingCNT(void) {
-	unsigned int32_t unNRF905HoppingCNT;
-	piLock(NRF905STATUS_LOCK);
+uint32_t getNRF905StatusHoppingCNT(void) {
+	uint32_t unNRF905HoppingCNT;
+	osMutexWait(nRF905OccupyHandle, 0);
 	unNRF905HoppingCNT = tNRF905Status.unNRF905HoppingCNT;
-	piUnlock(NRF905STATUS_LOCK);
+	osMutexRelease(nRF905OccupyHandle);
 	return unNRF905HoppingCNT;
 }
 
@@ -438,11 +340,10 @@ void queryCarStatus(void const * argument) {
 	
 }
 
-void nRF905Initial(void) {
-	
-}
-
 void startNRF905Trans(void const * argument) {
-	nRF905Initial()
+	nRF905Initial();
 	osTimerStart(nCarStatusHandle, 200);
+	while (1) {
+		vTaskDelay(pdMS_TO_TICKS(5000));
+	}
 }

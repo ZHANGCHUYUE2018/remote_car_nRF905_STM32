@@ -65,6 +65,7 @@ DMA_HandleTypeDef hdma_spi1_rx;
 osThreadId defaultTaskHandle;
 osThreadId nRF905HandlerHandle;
 osTimerId nCarStatusHandle;
+osMutexId nRF905OccupyHandle;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
@@ -122,6 +123,11 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
+
+  /* Create the mutex(es) */
+  /* definition and creation of nRF905Occupy */
+  osMutexDef(nRF905Occupy);
+  nRF905OccupyHandle = osMutexCreate(osMutex(nRF905Occupy));
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -311,10 +317,10 @@ static void MX_DMA_Init(void)
 
   /* DMA interrupt init */
   /* DMA1_Channel2_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 7, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel2_IRQn, 9, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel2_IRQn);
   /* DMA1_Channel3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 5, 0);
+  HAL_NVIC_SetPriority(DMA1_Channel3_IRQn, 8, 0);
   HAL_NVIC_EnableIRQ(DMA1_Channel3_IRQn);
 
 }
@@ -329,11 +335,32 @@ static void MX_DMA_Init(void)
 static void MX_GPIO_Init(void)
 {
 
+  GPIO_InitTypeDef GPIO_InitStruct;
+
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, NRF905_TX_EN_Pin|NRF905_TRX_CE_Pin|NRF905_PWR_UP_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : NRF905_DR_Pin */
+  GPIO_InitStruct.Pin = NRF905_DR_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(NRF905_DR_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : NRF905_TX_EN_Pin NRF905_TRX_CE_Pin NRF905_PWR_UP_Pin */
+  GPIO_InitStruct.Pin = NRF905_TX_EN_Pin|NRF905_TRX_CE_Pin|NRF905_PWR_UP_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI4_IRQn, 7, 0);
+  HAL_NVIC_EnableIRQ(EXTI4_IRQn);
 
 }
 

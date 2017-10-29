@@ -65,6 +65,15 @@
 #define NRF905_MISO_GPIO_Port GPIOA
 #define NRF905_MOSI_Pin GPIO_PIN_7
 #define NRF905_MOSI_GPIO_Port GPIOA
+#define NRF905_DR_Pin GPIO_PIN_4
+#define NRF905_DR_GPIO_Port GPIOC
+#define NRF905_DR_EXTI_IRQn EXTI4_IRQn
+#define NRF905_TX_EN_Pin GPIO_PIN_2
+#define NRF905_TX_EN_GPIO_Port GPIOB
+#define NRF905_TRX_CE_Pin GPIO_PIN_10
+#define NRF905_TRX_CE_GPIO_Port GPIOB
+#define NRF905_PWR_UP_Pin GPIO_PIN_11
+#define NRF905_PWR_UP_GPIO_Port GPIOB
 
 /* ########################## Assert Selection ############################## */
 /**
