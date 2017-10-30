@@ -83,7 +83,7 @@
 /* #define USE_FULL_ASSERT    1U */
 
 /* USER CODE BEGIN Private defines */
-
+#define GET_LENGTH_OF_ARRAY(x)			(sizeof(x)/sizeof(x[0]))
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
