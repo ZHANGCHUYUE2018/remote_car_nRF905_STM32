@@ -9,6 +9,7 @@ extern osThreadId nRF905HandlerHandle;
 extern osTimerId nCarStatusHandle;
 extern SPI_HandleTypeDef hspi1;
 extern osMutexId nRF905OccupyHandle;
+extern osSemaphoreId nRF905SPIDMAHandle;
 
 #define NRF905_SPI_CHN					hspi1
 #define NRF905_POWER					3
@@ -43,6 +44,7 @@ extern osMutexId nRF905OccupyHandle;
 #define CH_MSK_IN_CC_REG						0x01FF
 #define NRF905_DR_IN_STATUS_REG(status)			((status) & (0x01 << 5))
 
+#define GET_LENGTH_OF_ARRAY(x) 					(sizeof(x)/sizeof(x[0]))
 typedef enum _nRF905Command {
 	NRF905_CMD_GET_STATUS = 0,
 	NRF905_CMD_SET_STATUS,
@@ -119,23 +121,23 @@ static int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode) {
 }
 
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
-	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-	vTaskNotifyGiveFromISR(nRF905HandlerHandle, &xHigherPriorityTaskWoken);
-	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	if (&hspi1 == hspi) {
+		osSemaphoreRelease(nRF905SPIDMAHandle);
+	}
 }
 
 static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pBuff, uint8_t unBuffLen) {
 	uint8_t* pRxBuff = NULL;
-	uint32_t ulNotificationValue;
-	const TickType_t xMaxBlockTime = pdMS_TO_TICKS(200);
+	int32_t nWaitResult;
+	const TickType_t xMaxBlockTime = pdMS_TO_TICKS(3000);
 	
 	pRxBuff = malloc(unBuffLen);
 	if (NULL == pRxBuff) {
 		return (-1);
 	}
 	if (HAL_OK == HAL_SPI_TransmitReceive_DMA(pSPI_Handler, pBuff, pRxBuff, unBuffLen)) {
-		ulNotificationValue = ulTaskNotifyTake( pdTRUE, xMaxBlockTime );
-		if( ulNotificationValue == 1 ) {
+		nWaitResult = osSemaphoreWait( nRF905SPIDMAHandle, xMaxBlockTime );
+		if( nWaitResult == osOK ) {
 			/* The transmission ended as expected. */
 			memcpy(pBuff, pRxBuff, unBuffLen);
 			free(pRxBuff);
@@ -234,8 +236,8 @@ static int32_t nRF905CRInitial(void) {
 #define GET_TX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0x5CA259AA)
 #define GET_RX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0xA33D59AA)
 static int32_t roamNRF905(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
-	uint8_t nHoppingTimes;
-	uint8_t nHoppingIndex;
+	static uint8_t nHoppingTimes;
+	static uint8_t nHoppingIndex;
 	uint32_t ulNotificationValue;
 	nRF905Mode_t tPreMode = tNRF905Status.tNRF905CurrentMode;
 	
@@ -325,6 +327,7 @@ void startNRF905Trans(void const * argument) {
 	nRF905Initial();
 	osTimerStart(nCarStatusHandle, 200);
 	while (1) {
-		osDelay(5000);
+		osDelay(1000);
+		HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
 	}
 }

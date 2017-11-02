@@ -57,6 +57,12 @@
 
 /* Private define ------------------------------------------------------------*/
 
+#define LED4_Pin GPIO_PIN_13
+#define LED4_GPIO_Port GPIOC
+#define LED3_Pin GPIO_PIN_1
+#define LED3_GPIO_Port GPIOC
+#define LED2_Pin GPIO_PIN_3
+#define LED2_GPIO_Port GPIOC
 #define NRF905_CSN_Pin GPIO_PIN_4
 #define NRF905_CSN_GPIO_Port GPIOA
 #define NRF905_SCK_Pin GPIO_PIN_5
@@ -83,7 +89,7 @@
 /* #define USE_FULL_ASSERT    1U */
 
 /* USER CODE BEGIN Private defines */
-#define GET_LENGTH_OF_ARRAY(x)			(sizeof(x)/sizeof(x[0]))
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
