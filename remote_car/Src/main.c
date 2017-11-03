@@ -64,7 +64,8 @@ osThreadId defaultTaskHandle;
 osThreadId nRF905HandlerHandle;
 osTimerId nCarStatusHandle;
 osMutexId nRF905OccupyHandle;
-osSemaphoreId nRF905SPIDMAHandle;
+osSemaphoreId nRF905SPIDMACpltHandle;
+osSemaphoreId DataReadySetHandle;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
@@ -131,9 +132,13 @@ int main(void)
   /* USER CODE END RTOS_MUTEX */
 
   /* Create the semaphores(s) */
-  /* definition and creation of nRF905SPIDMA */
-  osSemaphoreDef(nRF905SPIDMA);
-  nRF905SPIDMAHandle = osSemaphoreCreate(osSemaphore(nRF905SPIDMA), 1);
+  /* definition and creation of nRF905SPIDMACplt */
+  osSemaphoreDef(nRF905SPIDMACplt);
+  nRF905SPIDMACpltHandle = osSemaphoreCreate(osSemaphore(nRF905SPIDMACplt), 1);
+
+  /* definition and creation of DataReadySet */
+  osSemaphoreDef(DataReadySet);
+  DataReadySetHandle = osSemaphoreCreate(osSemaphore(DataReadySet), 1);
 
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
@@ -243,8 +248,8 @@ static void MX_SPI1_Init(void)
   hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
-  hspi1.Init.NSS = SPI_NSS_HARD_OUTPUT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_8;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -296,6 +301,9 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOC, LED4_Pin|LED3_Pin|LED2_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, NRF905_TX_EN_Pin|NRF905_TRX_CE_Pin|NRF905_PWR_UP_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : LED4_Pin LED3_Pin LED2_Pin */
@@ -303,6 +311,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : NRF905_CSN_Pin */
+  GPIO_InitStruct.Pin = NRF905_CSN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(NRF905_CSN_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : NRF905_DR_Pin */
   GPIO_InitStruct.Pin = NRF905_DR_Pin;

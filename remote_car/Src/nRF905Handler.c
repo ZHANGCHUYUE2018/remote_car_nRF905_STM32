@@ -9,7 +9,8 @@ extern osThreadId nRF905HandlerHandle;
 extern osTimerId nCarStatusHandle;
 extern SPI_HandleTypeDef hspi1;
 extern osMutexId nRF905OccupyHandle;
-extern osSemaphoreId nRF905SPIDMAHandle;
+extern osSemaphoreId nRF905SPIDMACpltHandle;
+extern osSemaphoreId DataReadySetHandle;
 
 #define NRF905_SPI_CHN					hspi1
 #define NRF905_POWER					3
@@ -18,6 +19,7 @@ extern osSemaphoreId nRF905SPIDMAHandle;
 #define NRF905_RX_ADDR_LEN				4
 #define NRF905_RX_PAYLOAD_LEN			32
 #define NRF905_TX_PAYLOAD_LEN			NRF905_RX_PAYLOAD_LEN
+#define NRF905_SPI_TX_RX_MAX_LEN		(NRF905_RX_PAYLOAD_LEN + 1)
 #define MAX_HOPPING_RETRY_TIMES			3
 
 /* Here is how the RF works:
@@ -122,29 +124,26 @@ static int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode) {
 
 void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
 	if (&hspi1 == hspi) {
-		osSemaphoreRelease(nRF905SPIDMAHandle);
+		osSemaphoreRelease(nRF905SPIDMACpltHandle);
 	}
 }
 
 static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pBuff, uint8_t unBuffLen) {
-	uint8_t* pRxBuff = NULL;
+	static uint8_t unRxBuff[NRF905_SPI_TX_RX_MAX_LEN];
 	int32_t nWaitResult;
-	const TickType_t xMaxBlockTime = pdMS_TO_TICKS(3000);
-	
-	pRxBuff = malloc(unBuffLen);
-	if (NULL == pRxBuff) {
+	if (unBuffLen > (NRF905_SPI_TX_RX_MAX_LEN - 1)) {
 		return (-1);
 	}
-	if (HAL_OK == HAL_SPI_TransmitReceive_DMA(pSPI_Handler, pBuff, pRxBuff, unBuffLen)) {
-		nWaitResult = osSemaphoreWait( nRF905SPIDMAHandle, xMaxBlockTime );
+	HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_RESET);
+	if (HAL_OK == HAL_SPI_TransmitReceive_DMA(pSPI_Handler, pBuff, unRxBuff, unBuffLen)) {
+		nWaitResult = osSemaphoreWait( nRF905SPIDMACpltHandle, 50 );
+		HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_SET);
 		if( nWaitResult == osOK ) {
 			/* The transmission ended as expected. */
-			memcpy(pBuff, pRxBuff, unBuffLen);
-			free(pRxBuff);
+			memcpy(pBuff, unRxBuff, unBuffLen);
 			return 0;
 		} else {
 			/* The call to ulTaskNotifyTake() timed out. */
-			free(pRxBuff);
 			return (-1);
 		}
 	} else {
@@ -157,21 +156,18 @@ static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pBuff, 
 static int32_t nRF905SPI_WR_CMD(uint8_t unCMD, const uint8_t *pData, int32_t nDataLen) {
 	int32_t nResult;
 	nRF905Mode_t tPreMode;
-	uint8_t* pBuff;
+	static uint8_t unBuff[NRF905_SPI_TX_RX_MAX_LEN];
+	if (nDataLen > (NRF905_SPI_TX_RX_MAX_LEN - 1)) {
+		return (-1);
+	}
 	if (nDataLen > 0) {
-		pBuff = malloc(nDataLen + 1);
-		if (pBuff) {
-			pBuff[0] = unCMD;
-			memcpy(pBuff + 1, pData, nDataLen);
-			tPreMode = tNRF905Status.tNRF905CurrentMode;
-			setNRF905Mode(NRF905_MODE_STD_BY);
-			nResult = nRF905SPIDataRW(&NRF905_SPI_CHN, pBuff, nDataLen + 1);
-			setNRF905Mode(tPreMode);
-			free(pBuff);
-			return nResult;
-		} else {
-			return (-1);
-		}
+		unBuff[0] = unCMD;
+		memcpy(unBuff + 1, pData, nDataLen);
+		tPreMode = tNRF905Status.tNRF905CurrentMode;
+		setNRF905Mode(NRF905_MODE_STD_BY);
+		nResult = nRF905SPIDataRW(&NRF905_SPI_CHN, unBuff, nDataLen + 1);
+		setNRF905Mode(tPreMode);
+		return nResult;
 	} else {
 		return (-1);
 	}
@@ -192,6 +188,10 @@ static int32_t readRxPayload(uint8_t* pBuff, int32_t nBuffLen) {
 	} else {
 		return (-1);
 	}
+}
+
+static int32_t readConfig(uint8_t unConfigAddr, const uint8_t* pBuff, int32_t nBuffLen) {
+	return nRF905SPI_WR_CMD(NRF905_CMD_RC(unConfigAddr), pBuff, nBuffLen);
 }
 
 static int32_t writeConfig(uint8_t unConfigAddr, const uint8_t* pBuff, int32_t nBuffLen) {
@@ -222,9 +222,7 @@ static int32_t writeFastConfig(uint16_t unPA_PLL_CHN) {
 }
 
 int32_t nRF905DataReadyHandler(void) {
-	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-	vTaskNotifyGiveFromISR(nRF905HandlerHandle, &xHigherPriorityTaskWoken);
-	portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+	osSemaphoreRelease(DataReadySetHandle);
 	return 0;
 }
 
@@ -236,9 +234,9 @@ static int32_t nRF905CRInitial(void) {
 #define GET_TX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0x5CA259AA)
 #define GET_RX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0xA33D59AA)
 static int32_t roamNRF905(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
-	static uint8_t nHoppingTimes;
-	static uint8_t nHoppingIndex;
-	uint32_t ulNotificationValue;
+	uint8_t nHoppingTimes;
+	uint8_t nHoppingIndex;
+	int32_t nWaitResult;
 	nRF905Mode_t tPreMode = tNRF905Status.tNRF905CurrentMode;
 	
 	for (nHoppingTimes = 0; nHoppingTimes < MAX_HOPPING_RETRY_TIMES; nHoppingTimes++) {
@@ -257,8 +255,8 @@ static int32_t roamNRF905(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 			// Timeout or transmit done, I don't care
 			osDelay(2);
 			setNRF905Mode(NRF905_MODE_BURST_RX);
-			ulNotificationValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(40));
-			if( ulNotificationValue == 1 ) {
+			nWaitResult = osSemaphoreWait( nRF905SPIDMACpltHandle, 50 );
+			if( nWaitResult == osOK ) {
 				/* Something received. */
 				readRxPayload(pRxBuff, nRxBuffLen);
 				setNRF905Mode(tPreMode);
@@ -272,7 +270,7 @@ static int32_t roamNRF905(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 }
 
 int32_t nRF905SendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
-	uint32_t ulNotificationValue;
+	int32_t nWaitResult;
 	nRF905Mode_t tPreMode;
 	int32_t nResult;
 	
@@ -287,8 +285,8 @@ int32_t nRF905SendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 	// Timeout or transmit done, I don't care
 	osDelay(2);
 	setNRF905Mode(NRF905_MODE_BURST_RX);
-	ulNotificationValue = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
-	if( ulNotificationValue == 1 ) {
+	nWaitResult = osSemaphoreWait( nRF905SPIDMACpltHandle, 100 );
+	if( nWaitResult == osOK ) {
 		/* Something received. */
 		readRxPayload(pRxBuff, nRxBuffLen);
 		setNRF905Mode(tPreMode);
@@ -316,10 +314,14 @@ CarStatus_t getCarStatus(void) {
 	return tRemoteCarStatus;
 }
 
+uint8_t unReadConfBuff[6];
 static int32_t nRF905Initial(void) {
+	HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_SET);
 	setNRF905Mode(NRF905_MODE_STD_BY);
-	osDelay(4);
+	osSemaphoreWait( nRF905SPIDMACpltHandle, 10 );
+	osDelay(10);
 	nRF905CRInitial();
+	readConfig(0, unReadConfBuff, GET_LENGTH_OF_ARRAY(unReadConfBuff));
 	return 0;
 }
 
