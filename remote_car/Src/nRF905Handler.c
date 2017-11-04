@@ -42,13 +42,13 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRF905_CMD_WTA							0x22
 #define NRF905_CMD_RTA							0x23
 #define NRF905_CMD_RRP							0x24
-#define NRF905_CMD_CC(unPwrChn)					((unPwrChn) | 0x1000)
+#define NRF905_CMD_CC(unPwrChn)					((unPwrChn) | 0x8000)
 #define CH_MSK_IN_CC_REG						0x01FF
 #define NRF905_DR_IN_STATUS_REG(status)			((status) & (0x01 << 5))
 
 #define GET_LENGTH_OF_ARRAY(x) 					(sizeof(x)/sizeof(x[0]))
 typedef enum _nRF905Command {
-	NRF905_CMD_GET_STATUS = 0,
+	NRF905_CMD_GET_STATUS = 0xC2,
 	NRF905_CMD_SET_STATUS,
 	NRF905_CMD_MAX
 } nRF905CMD_t;
@@ -128,19 +128,21 @@ void HAL_SPI_TxRxCpltCallback(SPI_HandleTypeDef *hspi) {
 	}
 }
 
-static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pBuff, uint8_t unBuffLen) {
-	static uint8_t unRxBuff[NRF905_SPI_TX_RX_MAX_LEN];
+static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pTxBuff, uint8_t* pRxBuff, uint8_t unBuffLen) {
 	int32_t nWaitResult;
-	if (unBuffLen > (NRF905_SPI_TX_RX_MAX_LEN - 1)) {
+	nRF905Mode_t tPreMode;
+	if (unBuffLen > NRF905_SPI_TX_RX_MAX_LEN) {
 		return (-1);
 	}
+	tPreMode = tNRF905Status.tNRF905CurrentMode;
+	setNRF905Mode(NRF905_MODE_STD_BY);
 	HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_RESET);
-	if (HAL_OK == HAL_SPI_TransmitReceive_DMA(pSPI_Handler, pBuff, unRxBuff, unBuffLen)) {
+	if (HAL_OK == HAL_SPI_TransmitReceive_DMA(pSPI_Handler, pTxBuff, pRxBuff, unBuffLen)) {
 		nWaitResult = osSemaphoreWait( nRF905SPIDMACpltHandle, 50 );
 		HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_SET);
+		setNRF905Mode(tPreMode);
 		if( nWaitResult == osOK ) {
 			/* The transmission ended as expected. */
-			memcpy(pBuff, unRxBuff, unBuffLen);
 			return 0;
 		} else {
 			/* The call to ulTaskNotifyTake() timed out. */
@@ -151,74 +153,63 @@ static int32_t nRF905SPIDataRW(SPI_HandleTypeDef* pSPI_Handler, uint8_t* pBuff, 
 	}
 }
 
-// No set mode in low level APIs because if you set Standby mode
-// then after write SPI you don't know what to change back
-static int32_t nRF905SPI_WR_CMD(uint8_t unCMD, const uint8_t *pData, int32_t nDataLen) {
-	int32_t nResult;
-	nRF905Mode_t tPreMode;
-	static uint8_t unBuff[NRF905_SPI_TX_RX_MAX_LEN];
+static int32_t nRF905SPIWrite(uint8_t unCMD, const uint8_t *pData, int32_t nDataLen) {
+	static uint8_t unTxBuff[NRF905_SPI_TX_RX_MAX_LEN];
+	static uint8_t unRxBuff[NRF905_SPI_TX_RX_MAX_LEN];
 	if (nDataLen > (NRF905_SPI_TX_RX_MAX_LEN - 1)) {
 		return (-1);
-	}
-	if (nDataLen > 0) {
-		unBuff[0] = unCMD;
-		memcpy(unBuff + 1, pData, nDataLen);
-		tPreMode = tNRF905Status.tNRF905CurrentMode;
-		setNRF905Mode(NRF905_MODE_STD_BY);
-		nResult = nRF905SPIDataRW(&NRF905_SPI_CHN, unBuff, nDataLen + 1);
-		setNRF905Mode(tPreMode);
-		return nResult;
 	} else {
+		unTxBuff[0] = unCMD;
+		memcpy(unTxBuff + 1, pData, nDataLen);
+		return nRF905SPIDataRW(&NRF905_SPI_CHN, unTxBuff, unRxBuff, nDataLen + 1);
+	}
+}
+
+static int32_t nRF905SPIRead(uint8_t unCMD, uint8_t *pData, int32_t nDataLen) {
+	static uint8_t unTxBuff[NRF905_SPI_TX_RX_MAX_LEN];
+	static uint8_t unRxBuff[NRF905_SPI_TX_RX_MAX_LEN];
+	int32_t nRslt;
+	if (nDataLen > (NRF905_SPI_TX_RX_MAX_LEN - 1)) {
 		return (-1);
+	} else {
+		unTxBuff[0] = unCMD;
+//		memcpy(unTxBuff + 1, pData, nDataLen);
+		nRslt = nRF905SPIDataRW(&NRF905_SPI_CHN, unTxBuff, unRxBuff, nDataLen + 1);
+		if (0 == nRslt) {
+			memcpy(pData, unRxBuff + 1, nDataLen);
+		}
+		return nRslt;
 	}
 }
 
 static int32_t readRxPayload(uint8_t* pBuff, int32_t nBuffLen) {
-	int32_t nResult;
-	uint8_t unReadBuff[33];
-	nRF905Mode_t tPreMode;
-	if ((nBuffLen > 0) && (nBuffLen < sizeof(unReadBuff))) {
-		unReadBuff[0] = NRF905_CMD_RTP;
-		tPreMode = tNRF905Status.tNRF905CurrentMode;
-		setNRF905Mode(NRF905_MODE_STD_BY);
-		nResult = nRF905SPIDataRW(&NRF905_SPI_CHN, unReadBuff, nBuffLen + 1);
-		setNRF905Mode(tPreMode);
-		memcpy(pBuff, unReadBuff + 1, nBuffLen);
-		return nResult;
-	} else {
-		return (-1);
-	}
+	return nRF905SPIRead(NRF905_CMD_RTP, pBuff, nBuffLen);
 }
 
-static int32_t readConfig(uint8_t unConfigAddr, const uint8_t* pBuff, int32_t nBuffLen) {
-	return nRF905SPI_WR_CMD(NRF905_CMD_RC(unConfigAddr), pBuff, nBuffLen);
+static int32_t readConfig(uint8_t unConfigAddr, uint8_t* pBuff, int32_t nBuffLen) {
+	return nRF905SPIRead(NRF905_CMD_RC(unConfigAddr), pBuff, nBuffLen);
 }
 
 static int32_t writeConfig(uint8_t unConfigAddr, const uint8_t* pBuff, int32_t nBuffLen) {
-	return nRF905SPI_WR_CMD(NRF905_CMD_WC(unConfigAddr), pBuff, nBuffLen);
+	return nRF905SPIWrite(NRF905_CMD_WC(unConfigAddr), pBuff, nBuffLen);
 }
 
 static int32_t writeTxAddr(uint32_t unTxAddr) {
-	return nRF905SPI_WR_CMD(NRF905_CMD_WTA, (uint8_t*)(&unTxAddr), 4);
+	return nRF905SPIWrite(NRF905_CMD_WTA, (uint8_t*)(&unTxAddr), sizeof(uint32_t));
 }
 
 static int32_t writeRxAddr(uint32_t unRxAddr) {
-	return writeConfig(NRF905_RX_ADDRESS_IN_CR, (uint8_t*)(&unRxAddr), 4);
+	return nRF905SPIWrite(NRF905_RX_ADDRESS_IN_CR, (uint8_t*)(&unRxAddr), sizeof(uint32_t));
 }
 
 // TX and RX address are already configured during hopping
 static int32_t writeTxPayload(uint8_t* pBuff, int32_t nBuffLen) {
-	return writeConfig(NRF905_CMD_WTP, pBuff, nBuffLen);
+	return nRF905SPIWrite(NRF905_CMD_WTP, pBuff, nBuffLen);
 }
 
 static int32_t writeFastConfig(uint16_t unPA_PLL_CHN) {
-	int32_t nResult;
-	nRF905Mode_t tPreMode;
-	tPreMode = tNRF905Status.tNRF905CurrentMode;
-	setNRF905Mode(NRF905_MODE_STD_BY);
-	nResult = nRF905SPIDataRW(&NRF905_SPI_CHN, (uint8_t *)(&unPA_PLL_CHN), 2);
-	setNRF905Mode(tPreMode);
-	return nResult;
+	uint8_t unSubCmd = (uint8_t)(unPA_PLL_CHN & 0xFF);
+	return nRF905SPIWrite(NRF905_CMD_CC((uint8_t)(unPA_PLL_CHN >> 8)), &unSubCmd, 1);
 }
 
 int32_t nRF905DataReadyHandler(void) {
@@ -260,12 +251,15 @@ static int32_t roamNRF905(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 				/* Something received. */
 				readRxPayload(pRxBuff, nRxBuffLen);
 				setNRF905Mode(tPreMode);
+				tNRF905Status.unNRF905RecvFrameCNT++;
 				return 0;
 			} else {
+				
 				// Continue retry
 			}
 		}
 	}
+	setNRF905Mode(tPreMode);
 	return (-1);
 }
 
@@ -290,6 +284,7 @@ int32_t nRF905SendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 		/* Something received. */
 		readRxPayload(pRxBuff, nRxBuffLen);
 		setNRF905Mode(tPreMode);
+		tNRF905Status.unNRF905RecvFrameCNT++;
 		osMutexRelease(nRF905OccupyHandle);
 		return 0;
 	} else {
