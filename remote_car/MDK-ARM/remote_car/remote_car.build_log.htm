@@ -28,9 +28,16 @@ Project File Date:  11/03/2017
 *** Using Compiler 'V5.06 update 5 (build 528)', folder: 'D:\Keil_v5\ARM\ARMCC\Bin'
 Build target 'remote_car'
 compiling nRF905Handler.c...
+..\Src\nRF905Handler.c(269): warning:  #177-D: variable "nWaitResult"  was declared but never referenced
+  	int32_t nWaitResult;
+..\Src\nRF905Handler.c(271): warning:  #177-D: variable "nResult"  was declared but never referenced
+  	int32_t nResult;
+..\Src\nRF905Handler.c(229): warning:  #177-D: function "roamNRF905"  was declared but never referenced
+  static int32_t roamNRF905(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
+..\Src\nRF905Handler.c: 3 warnings, 0 errors
 linking...
-Program Size: Code=16900 RO-data=436 RW-data=160 ZI-data=5912  
-"remote_car\remote_car.axf" - 0 Error(s), 0 Warning(s).
+Program Size: Code=16568 RO-data=436 RW-data=160 ZI-data=5912  
+"remote_car\remote_car.axf" - 0 Error(s), 3 Warning(s).
 
 <h2>Software Packages used:</h2>
 

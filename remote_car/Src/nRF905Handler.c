@@ -12,15 +12,17 @@ extern osMutexId nRF905OccupyHandle;
 extern osSemaphoreId nRF905SPIDMACpltHandle;
 extern osSemaphoreId DataReadySetHandle;
 
-#define NRF905_SPI_CHN					hspi1
-#define NRF905_POWER					3
+#define NRF905_SPI_CHN							hspi1
+#define NRF905_POWER							3
 
-#define NRF905_TX_ADDR_LEN				4
-#define NRF905_RX_ADDR_LEN				4
-#define NRF905_RX_PAYLOAD_LEN			32
-#define NRF905_TX_PAYLOAD_LEN			NRF905_RX_PAYLOAD_LEN
-#define NRF905_SPI_TX_RX_MAX_LEN		(NRF905_RX_PAYLOAD_LEN + 1)
-#define MAX_HOPPING_RETRY_TIMES			3
+#define NRF905_TX_ADDR_LEN						4
+#define NRF905_RX_ADDR_LEN						4
+#define NRF905_RX_PAYLOAD_LEN					32
+#define NRF905_TX_PAYLOAD_LEN					NRF905_RX_PAYLOAD_LEN
+#define NRF905_SPI_TX_RX_MAX_LEN				(NRF905_RX_PAYLOAD_LEN + 1)
+#define MAX_HOPPING_RETRY_TIMES					3
+#define TEST_NRF905_TX_ADDR						0x12345678
+#define TEST_NRF905_RX_ADDR						0x87654321
 
 /* Here is how the RF works:
  * UP keeps monitoring if there is any valid frame available (CD should be SET) on certain channel for certain time.
@@ -272,28 +274,36 @@ int32_t nRF905SendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 		return (-1);
 	}
 	tPreMode = tNRF905Status.tNRF905CurrentMode;
-	setNRF905Mode(NRF905_MODE_STD_BY);
+	// For test only, fix channel, TX and RX address, no hopping
+	writeTxAddr(TEST_NRF905_TX_ADDR);
+	writeRxAddr(TEST_NRF905_RX_ADDR);
+	
 	writeTxPayload(pTxBuff, nTxBuffLen);
 	setNRF905Mode(NRF905_MODE_BURST_TX);
 	tNRF905Status.unNRF905SendFrameCNT++;
 	// Timeout or transmit done, I don't care
 	osDelay(2);
-	setNRF905Mode(NRF905_MODE_BURST_RX);
-	nWaitResult = osSemaphoreWait( nRF905SPIDMACpltHandle, 100 );
-	if( nWaitResult == osOK ) {
-		/* Something received. */
-		readRxPayload(pRxBuff, nRxBuffLen);
-		setNRF905Mode(tPreMode);
-		tNRF905Status.unNRF905RecvFrameCNT++;
-		osMutexRelease(nRF905OccupyHandle);
-		return 0;
-	} else {
-		/* The call to ulTaskNotifyTake() timed out. */
-		nResult = roamNRF905(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
-		setNRF905Mode(tPreMode);
-		osMutexRelease(nRF905OccupyHandle);
-		return nResult;
-	}
+	
+	setNRF905Mode(tPreMode);
+	osMutexRelease(nRF905OccupyHandle);
+	return 0;
+	
+//	setNRF905Mode(NRF905_MODE_BURST_RX);
+//	nWaitResult = osSemaphoreWait( nRF905SPIDMACpltHandle, 80 );
+//	if( nWaitResult == osOK ) {
+//		/* Something received. */
+//		readRxPayload(pRxBuff, nRxBuffLen);
+//		setNRF905Mode(tPreMode);
+//		tNRF905Status.unNRF905RecvFrameCNT++;
+//		osMutexRelease(nRF905OccupyHandle);
+//		return 0;
+//	} else {
+//		/* The call to ulTaskNotifyTake() timed out. */
+////		nResult = roamNRF905(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
+//		setNRF905Mode(tPreMode);
+//		osMutexRelease(nRF905OccupyHandle);
+//		return nResult;
+//	}
 }
 
 void queryCarStatus(void const * argument) {
@@ -313,7 +323,8 @@ uint8_t unReadConfBuff[6];
 static int32_t nRF905Initial(void) {
 	HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_SET);
 	setNRF905Mode(NRF905_MODE_STD_BY);
-	osSemaphoreWait( nRF905SPIDMACpltHandle, 10 );
+	osSemaphoreWait( nRF905SPIDMACpltHandle, 5 );
+	osSemaphoreWait( DataReadySetHandle, 5 );
 	osDelay(10);
 	nRF905CRInitial();
 	readConfig(0, unReadConfBuff, GET_LENGTH_OF_ARRAY(unReadConfBuff));
@@ -322,7 +333,7 @@ static int32_t nRF905Initial(void) {
 
 void startNRF905Trans(void const * argument) {
 	nRF905Initial();
-	osTimerStart(nCarStatusHandle, 200);
+	osTimerStart(nCarStatusHandle, 5000);
 	while (1) {
 		osDelay(1000);
 		HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
