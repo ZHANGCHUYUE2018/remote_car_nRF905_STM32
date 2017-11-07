@@ -50,7 +50,7 @@ extern osSemaphoreId DataReadySetHandle;
 
 #define GET_LENGTH_OF_ARRAY(x) 					(sizeof(x)/sizeof(x[0]))
 typedef enum _nRF905Command {
-	NRF905_CMD_GET_STATUS = 0xC2,
+	NRF905_CMD_GET_STATUS = 0,
 	NRF905_CMD_SET_STATUS,
 	NRF905_CMD_MAX
 } nRF905CMD_t;
@@ -98,7 +98,7 @@ static nRF905Status_t tNRF905Status = {0, 0, 0, 0, 0, NRF905_MODE_PWR_DOWN};
 // MSB of CH_NO will always be 0
 static const uint8_t NRF905_CR_DEFAULT[] = { 0x4C, 0x0C, // F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
 		(NRF905_RX_ADDR_LEN << 4) | NRF905_TX_ADDR_LEN,	// 4 bytes RX & TX address;
-		NRF905_RX_PAYLOAD_LEN, NRF905_TX_PAYLOAD_LEN, // 16 bytes RX & TX package length;
+		NRF905_RX_PAYLOAD_LEN, NRF905_TX_PAYLOAD_LEN, // 32 bytes RX & TX package length;
 		0x00, 0x0C, 0x40, 0x08,	// RX address is the calculation result of CH_NO
 		0x58 };	// 16MHz crystal; enable CRC; CRC16
 
@@ -185,7 +185,7 @@ static int32_t nRF905SPIRead(uint8_t unCMD, uint8_t *pData, int32_t nDataLen) {
 }
 
 static int32_t readRxPayload(uint8_t* pBuff, int32_t nBuffLen) {
-	return nRF905SPIRead(NRF905_CMD_RTP, pBuff, nBuffLen);
+	return nRF905SPIRead(NRF905_CMD_RRP, pBuff, nBuffLen);
 }
 
 static int32_t readConfig(uint8_t unConfigAddr, uint8_t* pBuff, int32_t nBuffLen) {
@@ -284,33 +284,33 @@ int32_t nRF905SendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 	// Timeout or transmit done, I don't care
 	osDelay(2);
 	
-	setNRF905Mode(tPreMode);
-	osMutexRelease(nRF905OccupyHandle);
-	return 0;
-	
-//	setNRF905Mode(NRF905_MODE_BURST_RX);
-//	nWaitResult = osSemaphoreWait( nRF905SPIDMACpltHandle, 80 );
-//	if( nWaitResult == osOK ) {
-//		/* Something received. */
-//		readRxPayload(pRxBuff, nRxBuffLen);
-//		setNRF905Mode(tPreMode);
-//		tNRF905Status.unNRF905RecvFrameCNT++;
-//		osMutexRelease(nRF905OccupyHandle);
-//		return 0;
-//	} else {
-//		/* The call to ulTaskNotifyTake() timed out. */
-////		nResult = roamNRF905(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
-//		setNRF905Mode(tPreMode);
-//		osMutexRelease(nRF905OccupyHandle);
-//		return nResult;
-//	}
+	setNRF905Mode(NRF905_MODE_BURST_RX);
+	nWaitResult = osSemaphoreWait( DataReadySetHandle, 80 );
+	if( nWaitResult == osOK ) {
+		/* Something received. */
+		readRxPayload(pRxBuff, nRxBuffLen);
+		setNRF905Mode(tPreMode);
+		tNRF905Status.unNRF905RecvFrameCNT++;
+		osMutexRelease(nRF905OccupyHandle);
+		return 0;
+	} else {
+		/* The call to ulTaskNotifyTake() timed out. */
+//		nResult = roamNRF905(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
+		setNRF905Mode(tPreMode);
+		osMutexRelease(nRF905OccupyHandle);
+		return nResult;
+	}
 }
-
+uint32_t unSysTickTest;
 void queryCarStatus(void const * argument) {
-	uint8_t unCmd = NRF905_CMD_GET_STATUS;
+	uint8_t unCmd[5]; 
 	uint8_t unReadFrame[sizeof(CarStatus_t)];
-	
-	if (nRF905SendFrame(&unCmd, sizeof(unCmd), unReadFrame, sizeof(unReadFrame)) == 0) {
+	uint32_t unSysTick;
+	unCmd[0] = NRF905_CMD_GET_STATUS; 
+	unSysTick = HAL_GetTick();
+	memcpy(unCmd + 1, &unSysTick, sizeof(unSysTick)); 
+	if (nRF905SendFrame(unCmd, sizeof(unCmd), unReadFrame, sizeof(unReadFrame)) == 0) {
+		unSysTickTest = HAL_GetTick() - unSysTick;
 		tRemoteCarStatus = *((CarStatus_t*)unReadFrame);
 	} 
 }
@@ -333,7 +333,7 @@ static int32_t nRF905Initial(void) {
 
 void startNRF905Trans(void const * argument) {
 	nRF905Initial();
-	osTimerStart(nCarStatusHandle, 5000);
+	osTimerStart(nCarStatusHandle, 1000);
 	while (1) {
 		osDelay(1000);
 		HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
