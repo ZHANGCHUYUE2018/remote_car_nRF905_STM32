@@ -108,11 +108,9 @@ static const uint16_t unCAR_REMOTE_HOPPING_TAB[] = { 0x804C, 0x803A, 0x8046, 0x8
 
 static int32_t setNRF905Mode(nRF905Mode_t tNRF905Mode) {
 	if (tNRF905Mode >= NRF905_MODE_MAX){
-		//NRF905_LOG_ERR("nRF905 Mode error.");
 		return (-1);
 	}
 	if (tNRF905Mode == tNRF905Status.tNRF905CurrentMode){
-		//NRF905_LOG_INFO("nRF905 Mode not changed, no need to set pin.");
 		return 0;
 	}
 
@@ -175,7 +173,6 @@ static int32_t nRF905SPIRead(uint8_t unCMD, uint8_t *pData, int32_t nDataLen) {
 		return (-1);
 	} else {
 		unTxBuff[0] = unCMD;
-//		memcpy(unTxBuff + 1, pData, nDataLen);
 		nRslt = nRF905SPIDataRW(&NRF905_SPI_CHN, unTxBuff, unRxBuff, nDataLen + 1);
 		if (0 == nRslt) {
 			memcpy(pData, unRxBuff + 1, nDataLen);
@@ -275,8 +272,8 @@ int32_t nRF905SendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 	}
 	tPreMode = tNRF905Status.tNRF905CurrentMode;
 	// For test only, fix channel, TX and RX address, no hopping
-	writeTxAddr(TEST_NRF905_TX_ADDR);
-	writeRxAddr(TEST_NRF905_RX_ADDR);
+//	writeTxAddr(TEST_NRF905_TX_ADDR);
+//	writeRxAddr(TEST_NRF905_RX_ADDR);
 	
 	writeTxPayload(pTxBuff, nTxBuffLen);
 	setNRF905Mode(NRF905_MODE_BURST_TX);
@@ -295,7 +292,7 @@ int32_t nRF905SendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 		return 0;
 	} else {
 		/* The call to ulTaskNotifyTake() timed out. */
-//		nResult = roamNRF905(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
+		nResult = roamNRF905(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
 		setNRF905Mode(tPreMode);
 		osMutexRelease(nRF905OccupyHandle);
 		return nResult;
@@ -319,7 +316,7 @@ CarStatus_t getCarStatus(void) {
 	return tRemoteCarStatus;
 }
 
-uint8_t unReadConfBuff[6];
+//uint8_t unReadConfBuff[6];
 static int32_t nRF905Initial(void) {
 	HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_SET);
 	setNRF905Mode(NRF905_MODE_STD_BY);
@@ -327,13 +324,13 @@ static int32_t nRF905Initial(void) {
 	osSemaphoreWait( DataReadySetHandle, 5 );
 	osDelay(10);
 	nRF905CRInitial();
-	readConfig(0, unReadConfBuff, GET_LENGTH_OF_ARRAY(unReadConfBuff));
+//	readConfig(0, unReadConfBuff, GET_LENGTH_OF_ARRAY(unReadConfBuff));
 	return 0;
 }
 
 void startNRF905Trans(void const * argument) {
 	nRF905Initial();
-	osTimerStart(nCarStatusHandle, 1000);
+	osTimerStart(nCarStatusHandle, 200);
 	while (1) {
 		osDelay(1000);
 		HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
