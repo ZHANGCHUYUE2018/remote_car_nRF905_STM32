@@ -17,7 +17,7 @@ extern osSemaphoreId DataReadySetHandle;
 
 #define NRF905_TX_ADDR_LEN						4
 #define NRF905_RX_ADDR_LEN						4
-#define NRF905_RX_PAYLOAD_LEN					32
+#define NRF905_RX_PAYLOAD_LEN					16
 #define NRF905_TX_PAYLOAD_LEN					NRF905_RX_PAYLOAD_LEN
 #define NRF905_SPI_TX_RX_MAX_LEN				(NRF905_RX_PAYLOAD_LEN + 1)
 #define MAX_HOPPING_RETRY_TIMES					3
@@ -98,7 +98,7 @@ static nRF905Status_t tNRF905Status = {0, 0, 0, 0, 0, NRF905_MODE_PWR_DOWN};
 // MSB of CH_NO will always be 0
 static const uint8_t NRF905_CR_DEFAULT[] = { 0x4C, 0x0C, // F=(422.4+(0x6C<<1)/10)*1; No retransmission; +6db; NOT reduce receive power
 		(NRF905_RX_ADDR_LEN << 4) | NRF905_TX_ADDR_LEN,	// 4 bytes RX & TX address;
-		NRF905_RX_PAYLOAD_LEN, NRF905_TX_PAYLOAD_LEN, // 32 bytes RX & TX package length;
+		NRF905_RX_PAYLOAD_LEN, NRF905_TX_PAYLOAD_LEN, // 16 bytes RX & TX package length;
 		0x00, 0x0C, 0x40, 0x08,	// RX address is the calculation result of CH_NO
 		0x58 };	// 16MHz crystal; enable CRC; CRC16
 
@@ -245,7 +245,7 @@ static int32_t roamNRF905(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 			// Timeout or transmit done, I don't care
 			osDelay(2);
 			setNRF905Mode(NRF905_MODE_BURST_RX);
-			nWaitResult = osSemaphoreWait( nRF905SPIDMACpltHandle, 50 );
+			nWaitResult = osSemaphoreWait( DataReadySetHandle, 50 );
 			if( nWaitResult == osOK ) {
 				/* Something received. */
 				readRxPayload(pRxBuff, nRxBuffLen);
