@@ -52,7 +52,11 @@
 #include "cmsis_os.h"
 
 /* USER CODE BEGIN Includes */
-
+#ifdef NRF905_AS_RF
+#define NRFxxx_DR_PIN_ISR_EDGE		GPIO_MODE_IT_RISING
+#else
+#define NRFxxx_DR_PIN_ISR_EDGE		GPIO_MODE_IT_FALLING
+#endif
 /* USER CODE END Includes */
 
 /* Private variables ---------------------------------------------------------*/
@@ -61,10 +65,10 @@ DMA_HandleTypeDef hdma_spi1_tx;
 DMA_HandleTypeDef hdma_spi1_rx;
 
 osThreadId defaultTaskHandle;
-osThreadId nRF905HandlerHandle;
+osThreadId nRFxxxHandlerHandle;
 osTimerId nCarStatusHandle;
-osMutexId nRF905OccupyHandle;
-osSemaphoreId nRF905SPIDMACpltHandle;
+osMutexId nRFxxxOccupyHandle;
+osSemaphoreId nRFxxxSPIDMACpltHandle;
 osSemaphoreId DataReadySetHandle;
 
 /* USER CODE BEGIN PV */
@@ -78,7 +82,7 @@ static void MX_GPIO_Init(void);
 static void MX_DMA_Init(void);
 static void MX_SPI1_Init(void);
 void StartDefaultTask(void const * argument);
-extern void startNRF905Trans(void const * argument);
+extern void startNRFxxxTrans(void const * argument);
 extern void queryCarStatus(void const * argument);
 
 /* USER CODE BEGIN PFP */
@@ -123,18 +127,18 @@ int main(void)
   /* USER CODE END 2 */
 
   /* Create the mutex(es) */
-  /* definition and creation of nRF905Occupy */
-  osMutexDef(nRF905Occupy);
-  nRF905OccupyHandle = osMutexCreate(osMutex(nRF905Occupy));
+  /* definition and creation of nRFxxxOccupy */
+  osMutexDef(nRFxxxOccupy);
+  nRFxxxOccupyHandle = osMutexCreate(osMutex(nRFxxxOccupy));
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
   /* USER CODE END RTOS_MUTEX */
 
   /* Create the semaphores(s) */
-  /* definition and creation of nRF905SPIDMACplt */
-  osSemaphoreDef(nRF905SPIDMACplt);
-  nRF905SPIDMACpltHandle = osSemaphoreCreate(osSemaphore(nRF905SPIDMACplt), 1);
+  /* definition and creation of nRFxxxSPIDMACplt */
+  osSemaphoreDef(nRFxxxSPIDMACplt);
+  nRFxxxSPIDMACpltHandle = osSemaphoreCreate(osSemaphore(nRFxxxSPIDMACplt), 1);
 
   /* definition and creation of DataReadySet */
   osSemaphoreDef(DataReadySet);
@@ -158,9 +162,9 @@ int main(void)
   osThreadDef(defaultTask, StartDefaultTask, osPriorityNormal, 0, 128);
   defaultTaskHandle = osThreadCreate(osThread(defaultTask), NULL);
 
-  /* definition and creation of nRF905Handler */
-  osThreadDef(nRF905Handler, startNRF905Trans, osPriorityIdle, 0, 128);
-  nRF905HandlerHandle = osThreadCreate(osThread(nRF905Handler), NULL);
+  /* definition and creation of nRFxxxHandler */
+  osThreadDef(nRFxxxHandler, startNRFxxxTrans, osPriorityIdle, 0, 128);
+  nRFxxxHandlerHandle = osThreadCreate(osThread(nRFxxxHandler), NULL);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -301,10 +305,10 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOC, LED4_Pin|LED3_Pin|LED2_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(NRF905_CSN_GPIO_Port, NRF905_CSN_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(NRFxxx_CSN_GPIO_Port, NRFxxx_CSN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, NRF905_TX_EN_Pin|NRF905_TRX_CE_Pin|NRF905_PWR_UP_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, NRFxxx_TX_EN_Pin|NRFxxx_TRX_CE_Pin|NRFxxx_PWR_UP_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : LED4_Pin LED3_Pin LED2_Pin */
   GPIO_InitStruct.Pin = LED4_Pin|LED3_Pin|LED2_Pin;
@@ -312,20 +316,20 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : NRF905_CSN_Pin */
-  GPIO_InitStruct.Pin = NRF905_CSN_Pin;
+  /*Configure GPIO pin : NRFxxx_CSN_Pin */
+  GPIO_InitStruct.Pin = NRFxxx_CSN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(NRF905_CSN_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(NRFxxx_CSN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : NRF905_DR_Pin */
-  GPIO_InitStruct.Pin = NRF905_DR_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  /*Configure GPIO pin : NRFxxx_DR_Pin */
+  GPIO_InitStruct.Pin = NRFxxx_DR_Pin;
+  GPIO_InitStruct.Mode = NRFxxx_DR_PIN_ISR_EDGE;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(NRF905_DR_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(NRFxxx_DR_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : NRF905_TX_EN_Pin NRF905_TRX_CE_Pin NRF905_PWR_UP_Pin */
-  GPIO_InitStruct.Pin = NRF905_TX_EN_Pin|NRF905_TRX_CE_Pin|NRF905_PWR_UP_Pin;
+  /*Configure GPIO pins : NRFxxx_TX_EN_Pin NRFxxx_TRX_CE_Pin NRFxxx_PWR_UP_Pin */
+  GPIO_InitStruct.Pin = NRFxxx_TX_EN_Pin|NRFxxx_TRX_CE_Pin|NRFxxx_PWR_UP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);

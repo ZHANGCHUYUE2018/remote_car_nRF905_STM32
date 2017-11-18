@@ -63,23 +63,23 @@
 #define LED3_GPIO_Port GPIOC
 #define LED2_Pin GPIO_PIN_3
 #define LED2_GPIO_Port GPIOC
-#define NRF905_CSN_Pin GPIO_PIN_4
-#define NRF905_CSN_GPIO_Port GPIOA
-#define NRF905_SCK_Pin GPIO_PIN_5
-#define NRF905_SCK_GPIO_Port GPIOA
-#define NRF905_MISO_Pin GPIO_PIN_6
-#define NRF905_MISO_GPIO_Port GPIOA
-#define NRF905_MOSI_Pin GPIO_PIN_7
-#define NRF905_MOSI_GPIO_Port GPIOA
-#define NRF905_DR_Pin GPIO_PIN_4
-#define NRF905_DR_GPIO_Port GPIOC
-#define NRF905_DR_EXTI_IRQn EXTI4_IRQn
-#define NRF905_TX_EN_Pin GPIO_PIN_2
-#define NRF905_TX_EN_GPIO_Port GPIOB
-#define NRF905_TRX_CE_Pin GPIO_PIN_10
-#define NRF905_TRX_CE_GPIO_Port GPIOB
-#define NRF905_PWR_UP_Pin GPIO_PIN_11
-#define NRF905_PWR_UP_GPIO_Port GPIOB
+#define NRFxxx_CSN_Pin GPIO_PIN_4
+#define NRFxxx_CSN_GPIO_Port GPIOA
+#define NRFxxx_SCK_Pin GPIO_PIN_5
+#define NRFxxx_SCK_GPIO_Port GPIOA
+#define NRFxxx_MISO_Pin GPIO_PIN_6
+#define NRFxxx_MISO_GPIO_Port GPIOA
+#define NRFxxx_MOSI_Pin GPIO_PIN_7
+#define NRFxxx_MOSI_GPIO_Port GPIOA
+#define NRFxxx_DR_Pin GPIO_PIN_4
+#define NRFxxx_DR_GPIO_Port GPIOC
+#define NRFxxx_DR_EXTI_IRQn EXTI4_IRQn
+#define NRFxxx_TX_EN_Pin GPIO_PIN_2
+#define NRFxxx_TX_EN_GPIO_Port GPIOB
+#define NRFxxx_TRX_CE_Pin GPIO_PIN_10
+#define NRFxxx_TRX_CE_GPIO_Port GPIOB
+#define NRFxxx_PWR_UP_Pin GPIO_PIN_11
+#define NRFxxx_PWR_UP_GPIO_Port GPIOB
 
 /* ########################## Assert Selection ############################## */
 /**

@@ -112,15 +112,15 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef* hspi)
     PA6     ------> SPI1_MISO
     PA7     ------> SPI1_MOSI 
     */
-    GPIO_InitStruct.Pin = NRF905_SCK_Pin|NRF905_MOSI_Pin;
+    GPIO_InitStruct.Pin = NRFxxx_SCK_Pin|NRFxxx_MOSI_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-    GPIO_InitStruct.Pin = NRF905_MISO_Pin;
+    GPIO_InitStruct.Pin = NRFxxx_MISO_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(NRF905_MISO_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(NRFxxx_MISO_GPIO_Port, &GPIO_InitStruct);
 
     /* SPI1 DMA Init */
     /* SPI1_TX Init */
@@ -178,7 +178,7 @@ void HAL_SPI_MspDeInit(SPI_HandleTypeDef* hspi)
     PA6     ------> SPI1_MISO
     PA7     ------> SPI1_MOSI 
     */
-    HAL_GPIO_DeInit(GPIOA, NRF905_SCK_Pin|NRF905_MISO_Pin|NRF905_MOSI_Pin);
+    HAL_GPIO_DeInit(GPIOA, NRFxxx_SCK_Pin|NRFxxx_MISO_Pin|NRFxxx_MOSI_Pin);
 
     /* SPI1 DMA DeInit */
     HAL_DMA_DeInit(hspi->hdmatx);
