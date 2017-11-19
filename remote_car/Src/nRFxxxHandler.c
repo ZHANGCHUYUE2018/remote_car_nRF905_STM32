@@ -49,7 +49,12 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRFxxx_CMD_CC(unPwrChn)					((unPwrChn) | 0x8000)
 #define CH_MSK_IN_CC_REG						0x01FF
 #define NRFxxx_DR_IN_STATUS_REG(status)			((status) & (0x01 << 5))
+
+#define NRFxxx_HOPPING_WAIT_RX_TIME				50
+#define NRFxxx_TX_WAIT_RESP_TIME				80
+
 #else
+
 #define NRFxxx_RX_PAYLOAD_LEN					32
 #define NRFxxx_TX_PAYLOAD_LEN					NRFxxx_RX_PAYLOAD_LEN
 #define NRFxxx_SPI_TX_RX_MAX_LEN				(NRFxxx_RX_PAYLOAD_LEN + 1)
@@ -66,6 +71,10 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRFxxx_CMD_WAP							0xA8
 #define NRFxxx_CMD_RRP							0x61
 #define NRFxxx_DR_IN_STATUS_REG(status)			((status) & (0x01 << 6))
+
+#define NRFxxx_HOPPING_WAIT_RX_TIME				10
+#define NRFxxx_TX_WAIT_RESP_TIME				20
+
 #endif
 
 #define GET_LENGTH_OF_ARRAY(x) 					(sizeof(x)/sizeof(x[0]))
@@ -236,9 +245,9 @@ static int32_t readRxPayload(uint8_t* pBuff, int32_t nBuffLen) {
 	return nRFxxxSPIRead(NRFxxx_CMD_RRP, pBuff, nBuffLen);
 }
 
-//static int32_t readConfig(uint8_t unConfigAddr, uint8_t* pBuff, int32_t nBuffLen) {
-//	return nRFxxxSPIRead(NRFxxx_CMD_RC(unConfigAddr), pBuff, nBuffLen);
-//}
+static int32_t readConfig(uint8_t unConfigAddr, uint8_t* pBuff, int32_t nBuffLen) {
+	return nRFxxxSPIRead(NRFxxx_CMD_RC(unConfigAddr), pBuff, nBuffLen);
+}
 
 static int32_t writeConfig(uint8_t unConfigAddr, const uint8_t* pBuff, int32_t nBuffLen) {
 	return nRFxxxSPIWrite(NRFxxx_CMD_WC(unConfigAddr), pBuff, nBuffLen);
@@ -323,9 +332,11 @@ static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 			setNRFxxxMode(NRFxxx_MODE_BURST_TX);
 			tNRFxxxStatus.unNRFxxxSendFrameCNT++;
 			// Timeout or transmit done, I don't care
+			#ifdef NRF905_AS_RF
 			osDelay(2);
 			setNRFxxxMode(NRFxxx_MODE_BURST_RX);
-			nWaitResult = osSemaphoreWait( DataReadySetHandle, 50 );
+			#endif
+			nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_HOPPING_WAIT_RX_TIME );
 			if( nWaitResult == osOK ) {
 				/* Something received. */
 #ifdef NRF24L01P_AS_RF
@@ -362,15 +373,16 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 	setNRFxxxMode(NRFxxx_MODE_BURST_TX);
 	tNRFxxxStatus.unNRFxxxSendFrameCNT++;
 	// Timeout or transmit done, I don't care
+	#ifdef NRF905_AS_RF
 	osDelay(2);
-	
 	setNRFxxxMode(NRFxxx_MODE_BURST_RX);
-	nWaitResult = osSemaphoreWait( DataReadySetHandle, 80 );
+	#endif
+	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
 	if( nWaitResult == osOK ) {
 		/* Something received. */
-#ifdef NRF24L01P_AS_RF
+		#ifdef NRF24L01P_AS_RF
 		clearDRFlag();
-#endif
+		#endif
 		readRxPayload(pRxBuff, nRxBuffLen);
 		setNRFxxxMode(tPreMode);
 		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
@@ -402,15 +414,18 @@ CarStatus_t getCarStatus(void) {
 	return tRemoteCarStatus;
 }
 
-//uint8_t unReadConfBuff[6];
+uint8_t unReadConfBuff[10];
 static int32_t nRFxxxInitial(void) {
+	uint8_t i;
 	HAL_GPIO_WritePin(NRFxxx_CSN_GPIO_Port, NRFxxx_CSN_Pin, GPIO_PIN_SET);
 	setNRFxxxMode(NRFxxx_MODE_STD_BY);
 	osSemaphoreWait( nRFxxxSPIDMACpltHandle, 5 );
 	osSemaphoreWait( DataReadySetHandle, 5 );
 	osDelay(10);
 	nRFxxxCRInitial();
-//	readConfig(0, unReadConfBuff, GET_LENGTH_OF_ARRAY(unReadConfBuff));
+	for (i = 0; i < GET_LENGTH_OF_ARRAY(unReadConfBuff); i++) {
+		readConfig(i, unReadConfBuff + i, 1);
+	}
 	return 0;
 }
 

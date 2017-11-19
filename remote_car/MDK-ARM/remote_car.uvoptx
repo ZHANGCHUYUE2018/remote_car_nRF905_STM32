@@ -320,7 +320,7 @@
         <SetRegEntry>
           <Number>0</Number>
           <Key>DLGUARM</Key>
-          <Name>/</Name>
+          <Name>\?</Name>
         </SetRegEntry>
         <SetRegEntry>
           <Number>0</Number>
@@ -358,12 +358,7 @@
         <Ww>
           <count>0</count>
           <WinNumber>1</WinNumber>
-          <ItemText>tNRF905Status</ItemText>
-        </Ww>
-        <Ww>
-          <count>1</count>
-          <WinNumber>1</WinNumber>
-          <ItemText>unSysTickTest</ItemText>
+          <ItemText>unReadConfBuff</ItemText>
         </Ww>
       </WatchWindow1>
       <MemoryWindow1>
