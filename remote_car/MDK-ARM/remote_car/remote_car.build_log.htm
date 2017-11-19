@@ -22,18 +22,16 @@ Dialog DLL:      TCM.DLL V1.32.0.0
  
 <h2>Project:</h2>
 G:\Geek\Projects\remote_car\code\remote_car\MDK-ARM\remote_car.uvprojx
-Project File Date:  11/03/2017
+Project File Date:  11/18/2017
 
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 5 (build 528)', folder: 'D:\Keil_v5\ARM\ARMCC\Bin'
-Build target 'remote_car'
-compiling nRF905Handler.c...
-..\Src\nRF905Handler.c(188): warning:  #177-D: function "readConfig"  was declared but never referenced
-  static int32_t readConfig(uint8_t unConfigAddr, uint8_t* pBuff, int32_t nBuffLen) {
-..\Src\nRF905Handler.c: 1 warning, 0 errors
+Build target 'remote_car_nrf24l01p'
+compiling user_GPIO_EXTI_IRQHandler.c...
+compiling nRFxxxHandler.c...
 linking...
-Program Size: Code=16896 RO-data=436 RW-data=160 ZI-data=5848  
-"remote_car\remote_car.axf" - 0 Error(s), 1 Warning(s).
+Program Size: Code=16888 RO-data=424 RW-data=160 ZI-data=5912  
+"remote_car\remote_car.axf" - 0 Error(s), 0 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -49,7 +47,7 @@ Package Vendor: Keil
                 STMicroelectronics STM32F1 Series Device Support, Drivers and Examples
 
 <h2>Collection of Component include folders:</h2>
-  .\RTE\_remote_car
+  .\RTE\_remote_car_nrf24l01p
   D:\Keil_v5\ARM\PACK\ARM\CMSIS\5.1.1\CMSIS\Include
   D:\Keil_v5\ARM\PACK\Keil\STM32F1xx_DFP\2.2.0\Device\Include
 
