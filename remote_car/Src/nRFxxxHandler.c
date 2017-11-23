@@ -143,7 +143,7 @@ typedef struct _nRFxxxInitCR {
 	unsigned char unCRValues;
 }nRFxxxInitCR_t;
 static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{0, 0x3E}, {1, 0x01},
-		{2, 0x01}, {3, 0x02}, {4, 0x24}, {5, 0x02}, {6, 0x0E}, {7, 0x70},
+		{2, 0x01}, {3, 0x02}, {4, 0x24}, {5, 0x02}, {6, 0x0F}, {7, 0x70},
 		{17, 0x20}, {18, 0x20}, {19, 0x20}, {20, 0x20}, {21, 0x20},
 		{22, 0x20}, {28, 0x01}, {29, 0x06}};
 #endif
@@ -255,14 +255,18 @@ static int32_t writeConfig(uint8_t unConfigAddr, const uint8_t* pBuff, int32_t n
 
 static int32_t writeTxAddr(uint32_t unTxAddr) {
 	#ifdef NRF905_AS_RF
-	return nRFxxxSPIWrite(NRFxxx_CMD_WTA, (uint8_t*)(&unTxAddr), sizeof(uint32_t));
+	return nRFxxxSPIWrite(NRFxxx_CMD_WTA, (uint8_t*)(&unTxAddr), sizeof(unTxAddr));
 	#else
-	return writeConfig(NRFxxx_TX_ADDRESS_IN_CR, (unsigned char*)(&unTxAddr), 4);
+	return writeConfig(NRFxxx_TX_ADDRESS_IN_CR, (unsigned char*)(&unTxAddr), sizeof(unTxAddr));
 	#endif
 }
 
 static int32_t writeRxAddr(uint32_t unRxAddr) {
-	return nRFxxxSPIWrite(NRFxxx_RX_ADDRESS_IN_CR, (uint8_t*)(&unRxAddr), sizeof(uint32_t));
+	#ifdef NRF905_AS_RF
+	return nRFxxxSPIWrite(NRFxxx_RX_ADDRESS_IN_CR, (uint8_t*)(&unRxAddr), sizeof(unRxAddr));
+	#else
+	return writeConfig(NRFxxx_RX_ADDRESS_IN_CR, (unsigned char*)(&unRxAddr), sizeof(unRxAddr));
+	#endif
 }
 
 // TX and RX address are already configured during hopping
@@ -326,8 +330,8 @@ static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 			writeConfig(NRFxxx_RF_CH_ADDR_IN_CR, &(tNRFxxxStatus.unNRFxxxCHN), sizeof(tNRFxxxStatus.unNRFxxxCHN));		
 			#endif
 			tNRFxxxStatus.unNRFxxxHoppingCNT++;
-			writeTxAddr(tNRFxxxStatus.unNRFxxxTxAddr);
-			writeRxAddr(tNRFxxxStatus.unNRFxxxRxAddr);
+			writeTxAddr(0x12345678);	//(tNRFxxxStatus.unNRFxxxTxAddr);
+			writeRxAddr(0x12345678);	//(tNRFxxxStatus.unNRFxxxRxAddr);
 			writeTxPayload(pTxBuff, nTxBuffLen);
 			setNRFxxxMode(NRFxxx_MODE_BURST_TX);
 			tNRFxxxStatus.unNRFxxxSendFrameCNT++;
@@ -376,6 +380,10 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 	#ifdef NRF905_AS_RF
 	osDelay(2);
 	setNRFxxxMode(NRFxxx_MODE_BURST_RX);
+//	#else
+//	__NOP();
+//	__NOP();
+//	setNRFxxxMode(NRFxxx_MODE_STD_BY);
 	#endif
 	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
 	if( nWaitResult == osOK ) {
@@ -398,7 +406,7 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 }
 uint32_t unSysTickTest;
 void queryCarStatus(void const * argument) {
-	uint8_t unCmd[5]; 
+	uint8_t unCmd[32]; 
 	uint8_t unReadFrame[sizeof(CarStatus_t)];
 	uint32_t unSysTick;
 	unCmd[0] = NRFxxx_CMD_GET_STATUS; 
