@@ -70,6 +70,8 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRFxxx_CMD_WTP							0xA0
 #define NRFxxx_CMD_WAP							0xA8
 #define NRFxxx_CMD_RRP							0x61
+#define NRFxxx_CMD_FLUSH_RX_FIFO				0xE2	// flush RX FIFO
+#define NRFxxx_CMD_FLUSH_TX_FIFO				0xE1	// flush TX FIFO
 #define NRFxxx_DR_IN_STATUS_REG(status)			((status) & (0x01 << 6))
 
 #define NRFxxx_HOPPING_WAIT_RX_TIME				10
@@ -222,7 +224,9 @@ static int32_t nRFxxxSPIWrite(uint8_t unCMD, const uint8_t *pData, int32_t nData
 		return (-1);
 	} else {
 		unTxBuff[0] = unCMD;
-		memcpy(unTxBuff + 1, pData, nDataLen);
+		if (nDataLen > 0) {
+			memcpy(unTxBuff + 1, pData, nDataLen);
+		}	
 		return nRFxxxSPIDataRW(&NRFxxx_SPI_CHN, unTxBuff, unRxBuff, nDataLen + 1);
 	}
 }
@@ -391,12 +395,14 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 //	setNRFxxxMode(NRFxxx_MODE_STD_BY);
 	#endif
 	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
+	setNRFxxxMode(NRFxxx_MODE_STD_BY);
 	if( nWaitResult == osOK ) {
 		/* Something received. */
+		readRxPayload(pRxBuff, nRxBuffLen);
 		#ifdef NRF24L01P_AS_RF
+		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
 		clearDRFlag();
 		#endif
-		readRxPayload(pRxBuff, nRxBuffLen);
 		setNRFxxxMode(tPreMode);
 		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
 		osMutexRelease(nRFxxxOccupyHandle);
@@ -404,6 +410,10 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 	} else {
 		/* The call to ulTaskNotifyTake() timed out. */
 		//nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
+		#ifdef NRF24L01P_AS_RF
+		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
+		clearDRFlag();
+		#endif
 		setNRFxxxMode(tPreMode);
 		osMutexRelease(nRFxxxOccupyHandle);
 		return nResult;
