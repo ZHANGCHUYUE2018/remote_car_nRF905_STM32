@@ -142,10 +142,12 @@ typedef struct _nRFxxxInitCR {
 	unsigned char unCRAddress;
 	unsigned char unCRValues;
 }nRFxxxInitCR_t;
-static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{0, 0x3E}, {1, 0x01},
-		{2, 0x01}, {3, 0x02}, {4, 0x24}, {5, 0x02}, {6, 0x0F}, {7, 0x70},
-		{17, 0x20}, {18, 0x20}, {19, 0x20}, {20, 0x20}, {21, 0x20},
-		{22, 0x20}, {28, 0x01}, {29, 0x06}};
+static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{1, 0x01},
+		{2, 0x01}, {4, 0x1A}, {5, 40}, {6, 0x0F}, {0, 0x3E}};
+//static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{0, 0x3E}, {1, 0x01},
+//		{2, 0x01}, {3, 0x02}, {4, 0x24}, {5, 40}, {6, 0x0F}, {7, 0x70},
+//		{17, 0x20}, {18, 0x20}, {19, 0x20}, {20, 0x20}, {21, 0x20},
+//		{22, 0x20}, {28, 0x01}, {29, 0x06}};
 #endif
 
 typedef struct _nRFxxxStatus {
@@ -281,8 +283,8 @@ static int32_t writeFastConfig(uint16_t unPA_PLL_CHN) {
 }
 #else
 static int clearDRFlag(void) {
-	return writeConfig(NRFxxx_CR_DEFAULT[NRFxxx_STATUS_ADDR_IN_CR].unCRAddress,
-			&(NRFxxx_CR_DEFAULT[NRFxxx_STATUS_ADDR_IN_CR].unCRValues), 1);
+	static const uint8_t unClearDRFlag = 0x70;
+	return writeConfig(NRFxxx_STATUS_ADDR_IN_CR, &unClearDRFlag, 1);
 }
 #endif
 
@@ -296,12 +298,15 @@ static int32_t nRFxxxCRInitial(void) {
 	return writeConfig(0, NRFxxx_CR_DEFAULT, sizeof(NRFxxx_CR_DEFAULT));
 	#else
 	uint8_t i;
+	writeTxAddr(0x12345678);
+	writeRxAddr(0x12345678);
 	for (i = 0; i < GET_LENGTH_OF_ARRAY(NRFxxx_CR_DEFAULT); i++) {
 		if (writeConfig(NRFxxx_CR_DEFAULT[i].unCRAddress,
 				&(NRFxxx_CR_DEFAULT[i].unCRValues), 1) < 0) {
 			return (-1);
 		}
 	}
+
 	return 0;
 	#endif	
 }
@@ -330,8 +335,8 @@ static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 			writeConfig(NRFxxx_RF_CH_ADDR_IN_CR, &(tNRFxxxStatus.unNRFxxxCHN), sizeof(tNRFxxxStatus.unNRFxxxCHN));		
 			#endif
 			tNRFxxxStatus.unNRFxxxHoppingCNT++;
-			writeTxAddr(0x12345678);	//(tNRFxxxStatus.unNRFxxxTxAddr);
-			writeRxAddr(0x12345678);	//(tNRFxxxStatus.unNRFxxxRxAddr);
+			writeTxAddr(tNRFxxxStatus.unNRFxxxTxAddr);
+			writeRxAddr(tNRFxxxStatus.unNRFxxxRxAddr);
 			writeTxPayload(pTxBuff, nTxBuffLen);
 			setNRFxxxMode(NRFxxx_MODE_BURST_TX);
 			tNRFxxxStatus.unNRFxxxSendFrameCNT++;
@@ -398,7 +403,7 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 		return 0;
 	} else {
 		/* The call to ulTaskNotifyTake() timed out. */
-		nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
+		//nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
 		setNRFxxxMode(tPreMode);
 		osMutexRelease(nRFxxxOccupyHandle);
 		return nResult;
