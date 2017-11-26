@@ -70,6 +70,7 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRFxxx_CMD_WTP							0xA0
 #define NRFxxx_CMD_WAP							0xA8
 #define NRFxxx_CMD_RRP							0x61
+#define NRFxxx_CMD_RRPW							0x60
 #define NRFxxx_CMD_FLUSH_RX_FIFO				0xE2	// flush RX FIFO
 #define NRFxxx_CMD_FLUSH_TX_FIFO				0xE1	// flush TX FIFO
 #define NRFxxx_DR_IN_STATUS_REG(status)			((status) & (0x01 << 6))
@@ -144,12 +145,12 @@ typedef struct _nRFxxxInitCR {
 	unsigned char unCRAddress;
 	unsigned char unCRValues;
 }nRFxxxInitCR_t;
-static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{1, 0x01},
-		{2, 0x01}, {4, 0x1A}, {5, 40}, {6, 0x0F}, {0, 0x3E}};
-//static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{0, 0x3E}, {1, 0x01},
-//		{2, 0x01}, {3, 0x02}, {4, 0x24}, {5, 40}, {6, 0x0F}, {7, 0x70},
-//		{17, 0x20}, {18, 0x20}, {19, 0x20}, {20, 0x20}, {21, 0x20},
-//		{22, 0x20}, {28, 0x01}, {29, 0x06}};
+//static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{1, 0x01},
+//		{2, 0x01}, {4, 0x1A}, {5, 40}, {6, 0x0F}, {0, 0x3E}};
+static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{0, 0x5E}, {1, 0x01},
+		{2, 0x01}, {3, 0x02}, {4, 0x24}, {5, 40}, {6, 0x0F}, {7, 0x70},
+		{17, 0x20}, {18, 0x20}, {19, 0x20}, {20, 0x20}, {21, 0x20},
+		{22, 0x20}, {28, 0x01}, {29, 0x06}};
 #endif
 
 typedef struct _nRFxxxStatus {
@@ -167,6 +168,8 @@ typedef struct _nRFxxxStatus {
 }nRFxxxStatus_t;
 
 static nRFxxxStatus_t tNRFxxxStatus = {0, 0, 0, 0, 0, NRFxxx_MODE_PWR_DOWN};
+
+static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen);
 
 static int32_t setNRFxxxMode(nRFxxxMode_t tNRFxxxMode) {
 	if (tNRFxxxMode >= NRFxxx_MODE_MAX){
@@ -255,6 +258,22 @@ static int32_t readConfig(uint8_t unConfigAddr, uint8_t* pBuff, int32_t nBuffLen
 	return nRFxxxSPIRead(NRFxxx_CMD_RC(unConfigAddr), pBuff, nBuffLen);
 }
 
+static int readStatusReg(void) {
+	int nResult;
+	nRFxxxMode_t tPreMode;
+	unsigned char unStatus;
+
+	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
+	setNRFxxxMode(NRFxxx_MODE_STD_BY);
+	nResult = nRFxxxSPIRead(NRFxxx_CMD_RC(1), &unStatus, sizeof(unStatus));
+	setNRFxxxMode(tPreMode);
+	if (0 < nResult) {
+		return unStatus;
+	} else {
+		return (-1);
+	}
+}
+
 static int32_t writeConfig(uint8_t unConfigAddr, const uint8_t* pBuff, int32_t nBuffLen) {
 	return nRFxxxSPIWrite(NRFxxx_CMD_WC(unConfigAddr), pBuff, nBuffLen);
 }
@@ -285,35 +304,105 @@ static int32_t writeFastConfig(uint16_t unPA_PLL_CHN) {
 	uint8_t unSubCmd = (uint8_t)(unPA_PLL_CHN & 0xFF);
 	return nRFxxxSPIWrite(NRFxxx_CMD_CC((uint8_t)(unPA_PLL_CHN >> 8)), &unSubCmd, 1);
 }
+
+int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
+	int32_t nWaitResult;
+	nRFxxxMode_t tPreMode;
+	int32_t nResult;
+	
+	if (osMutexWait(nRFxxxOccupyHandle, 500) != osOK) {
+		return (-1);
+	}
+	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
+	// For test only, fix channel, TX and RX address, no hopping
+//	writeTxAddr(TEST_NRFxxx_TX_ADDR);
+//	writeRxAddr(TEST_NRFxxx_RX_ADDR);
+	
+	writeTxPayload(pTxBuff, nTxBuffLen);
+	setNRFxxxMode(NRFxxx_MODE_BURST_TX);
+	tNRFxxxStatus.unNRFxxxSendFrameCNT++;
+	osDelay(2);
+	setNRFxxxMode(NRFxxx_MODE_BURST_RX);
+
+	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
+	setNRFxxxMode(NRFxxx_MODE_STD_BY);
+	if( nWaitResult == osOK ) {
+		/* Something received. */
+		readRxPayload(pRxBuff, nRxBuffLen);
+		setNRFxxxMode(tPreMode);
+		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
+		osMutexRelease(nRFxxxOccupyHandle);
+		return 0;
+	} else {
+		/* The call to ulTaskNotifyTake() timed out. */
+		nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
+		setNRFxxxMode(tPreMode);
+		osMutexRelease(nRFxxxOccupyHandle);
+		return nResult;
+	}
+}
 #else
+static int readRxPayloadWidth(void) {
+	unsigned char unReadBuff;
+	nRFxxxMode_t tPreMode;
+
+	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
+	setNRFxxxMode(NRFxxx_MODE_STD_BY);
+	if (nRFxxxSPIRead(NRFxxx_CMD_RRPW, &unReadBuff, sizeof(unReadBuff)) > 0) {
+		setNRFxxxMode(tPreMode);
+		return unReadBuff;
+	} else {
+		setNRFxxxMode(tPreMode);
+		return (-1);
+	}
+}
 static int clearDRFlag(void) {
 	static const uint8_t unClearDRFlag = 0x70;
 	return writeConfig(NRFxxx_STATUS_ADDR_IN_CR, &unClearDRFlag, 1);
 }
+
+int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
+	int32_t nWaitResult;
+	nRFxxxMode_t tPreMode;
+	int32_t nResult;
+	
+	if (osMutexWait(nRFxxxOccupyHandle, 500) != osOK) {
+		return (-1);
+	}
+	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
+
+	writeTxPayload(pTxBuff, nTxBuffLen);
+	setNRFxxxMode(NRFxxx_MODE_BURST_TX);
+	tNRFxxxStatus.unNRFxxxSendFrameCNT++;
+
+	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
+	setNRFxxxMode(NRFxxx_MODE_STD_BY);
+	if( nWaitResult == osOK ) {
+		/* Something received. */
+		nStatusReg = readStatusReg();
+		readRxPayload(pRxBuff, nRxBuffLen);
+		#ifdef NRF24L01P_AS_RF
+		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
+		clearDRFlag();
+		#endif
+		setNRFxxxMode(tPreMode);
+		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
+		osMutexRelease(nRFxxxOccupyHandle);
+		return 0;
+	} else {
+		/* The call to ulTaskNotifyTake() timed out. */
+		//nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
+		#ifdef NRF24L01P_AS_RF
+		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
+		clearDRFlag();
+		#endif
+		setNRFxxxMode(tPreMode);
+		osMutexRelease(nRFxxxOccupyHandle);
+		return nResult;
+	}
+}
 #endif
 
-int32_t nRFxxxDataReadyHandler(void) {
-	osSemaphoreRelease(DataReadySetHandle);
-	return 0;
-}
-
-static int32_t nRFxxxCRInitial(void) {
-	#ifdef NRF905_AS_RF
-	return writeConfig(0, NRFxxx_CR_DEFAULT, sizeof(NRFxxx_CR_DEFAULT));
-	#else
-	uint8_t i;
-	writeTxAddr(0x12345678);
-	writeRxAddr(0x12345678);
-	for (i = 0; i < GET_LENGTH_OF_ARRAY(NRFxxx_CR_DEFAULT); i++) {
-		if (writeConfig(NRFxxx_CR_DEFAULT[i].unCRAddress,
-				&(NRFxxx_CR_DEFAULT[i].unCRValues), 1) < 0) {
-			return (-1);
-		}
-	}
-
-	return 0;
-	#endif	
-}
 
 #define GET_CHN_PWR_FAST_CONFIG(x, y) 		((x) | ((y) << 10))
 #define GET_TX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0x5CA259AA)
@@ -369,56 +458,29 @@ static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 	return (-1);
 }
 
-int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
-	int32_t nWaitResult;
-	nRFxxxMode_t tPreMode;
-	int32_t nResult;
-	
-	if (osMutexWait(nRFxxxOccupyHandle, 500) != osOK) {
-		return (-1);
-	}
-	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
-	// For test only, fix channel, TX and RX address, no hopping
-//	writeTxAddr(TEST_NRFxxx_TX_ADDR);
-//	writeRxAddr(TEST_NRFxxx_RX_ADDR);
-	
-	writeTxPayload(pTxBuff, nTxBuffLen);
-	setNRFxxxMode(NRFxxx_MODE_BURST_TX);
-	tNRFxxxStatus.unNRFxxxSendFrameCNT++;
-	// Timeout or transmit done, I don't care
-	#ifdef NRF905_AS_RF
-	osDelay(2);
-	setNRFxxxMode(NRFxxx_MODE_BURST_RX);
-//	#else
-//	__NOP();
-//	__NOP();
-//	setNRFxxxMode(NRFxxx_MODE_STD_BY);
-	#endif
-	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
-	setNRFxxxMode(NRFxxx_MODE_STD_BY);
-	if( nWaitResult == osOK ) {
-		/* Something received. */
-		readRxPayload(pRxBuff, nRxBuffLen);
-		#ifdef NRF24L01P_AS_RF
-		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
-		clearDRFlag();
-		#endif
-		setNRFxxxMode(tPreMode);
-		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
-		osMutexRelease(nRFxxxOccupyHandle);
-		return 0;
-	} else {
-		/* The call to ulTaskNotifyTake() timed out. */
-		//nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
-		#ifdef NRF24L01P_AS_RF
-		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
-		clearDRFlag();
-		#endif
-		setNRFxxxMode(tPreMode);
-		osMutexRelease(nRFxxxOccupyHandle);
-		return nResult;
-	}
+int32_t nRFxxxDataReadyHandler(void) {
+	osSemaphoreRelease(DataReadySetHandle);
+	return 0;
 }
+
+static int32_t nRFxxxCRInitial(void) {
+	#ifdef NRF905_AS_RF
+	return writeConfig(0, NRFxxx_CR_DEFAULT, sizeof(NRFxxx_CR_DEFAULT));
+	#else
+	uint8_t i;
+	writeTxAddr(0x12345678);
+	writeRxAddr(0x12345678);
+	for (i = 0; i < GET_LENGTH_OF_ARRAY(NRFxxx_CR_DEFAULT); i++) {
+		if (writeConfig(NRFxxx_CR_DEFAULT[i].unCRAddress,
+				&(NRFxxx_CR_DEFAULT[i].unCRValues), 1) < 0) {
+			return (-1);
+		}
+	}
+
+	return 0;
+	#endif	
+}
+
 uint32_t unSysTickTest;
 void queryCarStatus(void const * argument) {
 	uint8_t unCmd[32]; 
