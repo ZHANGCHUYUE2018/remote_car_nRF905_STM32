@@ -51,7 +51,7 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRFxxx_DR_IN_STATUS_REG(status)			((status) & (0x01 << 5))
 
 #define NRFxxx_HOPPING_WAIT_RX_TIME				50
-#define NRFxxx_TX_WAIT_RESP_TIME				80
+#define NRFxxx_TX_WAIT_RESP_TIME				50
 
 #else
 
@@ -148,9 +148,8 @@ typedef struct _nRFxxxInitCR {
 //static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{1, 0x01},
 //		{2, 0x01}, {4, 0x1A}, {5, 40}, {6, 0x0F}, {0, 0x3E}};
 static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{0, 0x5E}, {1, 0x01},
-		{2, 0x01}, {3, 0x02}, {4, 0x24}, {5, 40}, {6, 0x0F}, {7, 0x70},
-		{17, 0x20}, {18, 0x20}, {19, 0x20}, {20, 0x20}, {21, 0x20},
-		{22, 0x20}, {28, 0x01}, {29, 0x06}};
+		{2, 0x01}, {3, 0x02}, {4, 0x14}, {5, 40}, {6, 0x0F}, {7, 0x70},
+		{28, 0x01}, {29, 0x06}};
 #endif
 
 typedef struct _nRFxxxStatus {
@@ -168,8 +167,6 @@ typedef struct _nRFxxxStatus {
 }nRFxxxStatus_t;
 
 static nRFxxxStatus_t tNRFxxxStatus = {0, 0, 0, 0, 0, NRFxxx_MODE_PWR_DOWN};
-
-static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen);
 
 static int32_t setNRFxxxMode(nRFxxxMode_t tNRFxxxMode) {
 	if (tNRFxxxMode >= NRFxxx_MODE_MAX){
@@ -267,7 +264,7 @@ static int readStatusReg(void) {
 	setNRFxxxMode(NRFxxx_MODE_STD_BY);
 	nResult = nRFxxxSPIRead(NRFxxx_CMD_RC(1), &unStatus, sizeof(unStatus));
 	setNRFxxxMode(tPreMode);
-	if (0 < nResult) {
+	if (0 <= nResult) {
 		return unStatus;
 	} else {
 		return (-1);
@@ -299,10 +296,56 @@ static int32_t writeTxPayload(uint8_t* pBuff, int32_t nBuffLen) {
 	return nRFxxxSPIWrite(NRFxxx_CMD_WTP, pBuff, nBuffLen);
 }
 
+#define GET_CHN_PWR_FAST_CONFIG(x, y) 		((x) | ((y) << 10))
+#define GET_TX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0x5CA259AA)
+#define GET_RX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0xA33D59AA)
+
 #ifdef NRF905_AS_RF
 static int32_t writeFastConfig(uint16_t unPA_PLL_CHN) {
 	uint8_t unSubCmd = (uint8_t)(unPA_PLL_CHN & 0xFF);
 	return nRFxxxSPIWrite(NRFxxx_CMD_CC((uint8_t)(unPA_PLL_CHN >> 8)), &unSubCmd, 1);
+}
+
+#define SAME_TX_RX_CODE_IN_HOPPING_AND_SEND_FRAME		writeTxPayload(pTxBuff, nTxBuffLen); \
+	setNRFxxxMode(NRFxxx_MODE_BURST_TX); \
+	tNRFxxxStatus.unNRFxxxSendFrameCNT++; \
+	osDelay(2); \
+	setNRFxxxMode(NRFxxx_MODE_BURST_RX); \
+	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME ); \
+	setNRFxxxMode(NRFxxx_MODE_STD_BY); \
+	if( nWaitResult == osOK ) { \
+		/* Something received. */
+		readRxPayload(pRxBuff, nRxBuffLen); \
+		setNRFxxxMode(tPreMode); \
+		tNRFxxxStatus.unNRFxxxRecvFrameCNT++; \
+		
+static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
+	uint8_t nHoppingTimes;
+	uint8_t nHoppingIndex;
+	int32_t nWaitResult;
+	nRFxxxMode_t tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
+	
+	for (nHoppingTimes = 0; nHoppingTimes < MAX_HOPPING_RETRY_TIMES; nHoppingTimes++) {
+		for (nHoppingIndex = 0; nHoppingIndex < GET_LENGTH_OF_ARRAY(unCAR_REMOTE_HOPPING_TAB); nHoppingIndex++) {
+			setNRFxxxMode(NRFxxx_MODE_STD_BY);
+			tNRFxxxStatus.unNRFxxxCHN_PWR = GET_CHN_PWR_FAST_CONFIG(unCAR_REMOTE_HOPPING_TAB[nHoppingIndex], NRFxxx_POWER);		
+			tNRFxxxStatus.unNRFxxxTxAddr = GET_TX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN_PWR);
+			tNRFxxxStatus.unNRFxxxRxAddr = GET_RX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN_PWR);		
+			writeFastConfig(tNRFxxxStatus.unNRFxxxCHN_PWR);
+			tNRFxxxStatus.unNRFxxxHoppingCNT++;
+			writeTxAddr(tNRFxxxStatus.unNRFxxxTxAddr);
+			writeRxAddr(tNRFxxxStatus.unNRFxxxRxAddr);
+			// since in send frame and roaming a lot code is the same, use one define to replace them
+			SAME_TX_RX_CODE_IN_HOPPING_AND_SEND_FRAME
+				return 0;
+			} else {
+				
+				// Continue retry
+			}
+		}
+	}
+	setNRFxxxMode(tPreMode);
+	return (-1);
 }
 
 int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
@@ -314,23 +357,9 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 		return (-1);
 	}
 	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
-	// For test only, fix channel, TX and RX address, no hopping
-//	writeTxAddr(TEST_NRFxxx_TX_ADDR);
-//	writeRxAddr(TEST_NRFxxx_RX_ADDR);
-	
-	writeTxPayload(pTxBuff, nTxBuffLen);
-	setNRFxxxMode(NRFxxx_MODE_BURST_TX);
-	tNRFxxxStatus.unNRFxxxSendFrameCNT++;
-	osDelay(2);
-	setNRFxxxMode(NRFxxx_MODE_BURST_RX);
 
-	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
-	setNRFxxxMode(NRFxxx_MODE_STD_BY);
-	if( nWaitResult == osOK ) {
-		/* Something received. */
-		readRxPayload(pRxBuff, nRxBuffLen);
-		setNRFxxxMode(tPreMode);
-		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
+	// since in send frame and roaming a lot code is the same, use one define to replace them
+	SAME_TX_RX_CODE_IN_HOPPING_AND_SEND_FRAME
 		osMutexRelease(nRFxxxOccupyHandle);
 		return 0;
 	} else {
@@ -361,52 +390,6 @@ static int clearDRFlag(void) {
 	return writeConfig(NRFxxx_STATUS_ADDR_IN_CR, &unClearDRFlag, 1);
 }
 
-int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
-	int32_t nWaitResult;
-	nRFxxxMode_t tPreMode;
-	int32_t nResult;
-	
-	if (osMutexWait(nRFxxxOccupyHandle, 500) != osOK) {
-		return (-1);
-	}
-	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
-
-	writeTxPayload(pTxBuff, nTxBuffLen);
-	setNRFxxxMode(NRFxxx_MODE_BURST_TX);
-	tNRFxxxStatus.unNRFxxxSendFrameCNT++;
-
-	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
-	setNRFxxxMode(NRFxxx_MODE_STD_BY);
-	if( nWaitResult == osOK ) {
-		/* Something received. */
-		nStatusReg = readStatusReg();
-		readRxPayload(pRxBuff, nRxBuffLen);
-		#ifdef NRF24L01P_AS_RF
-		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
-		clearDRFlag();
-		#endif
-		setNRFxxxMode(tPreMode);
-		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
-		osMutexRelease(nRFxxxOccupyHandle);
-		return 0;
-	} else {
-		/* The call to ulTaskNotifyTake() timed out. */
-		//nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
-		#ifdef NRF24L01P_AS_RF
-		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
-		clearDRFlag();
-		#endif
-		setNRFxxxMode(tPreMode);
-		osMutexRelease(nRFxxxOccupyHandle);
-		return nResult;
-	}
-}
-#endif
-
-
-#define GET_CHN_PWR_FAST_CONFIG(x, y) 		((x) | ((y) << 10))
-#define GET_TX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0x5CA259AA)
-#define GET_RX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0xA33D59AA)
 static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
 	uint8_t nHoppingTimes;
 	uint8_t nHoppingIndex;
@@ -416,34 +399,23 @@ static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 	for (nHoppingTimes = 0; nHoppingTimes < MAX_HOPPING_RETRY_TIMES; nHoppingTimes++) {
 		for (nHoppingIndex = 0; nHoppingIndex < GET_LENGTH_OF_ARRAY(unCAR_REMOTE_HOPPING_TAB); nHoppingIndex++) {
 			setNRFxxxMode(NRFxxx_MODE_STD_BY);
-			#ifdef NRF905_AS_RF
-			tNRFxxxStatus.unNRFxxxCHN_PWR = GET_CHN_PWR_FAST_CONFIG(unCAR_REMOTE_HOPPING_TAB[nHoppingIndex], NRFxxx_POWER);		
-			tNRFxxxStatus.unNRFxxxTxAddr = GET_TX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN_PWR);
-			tNRFxxxStatus.unNRFxxxRxAddr = GET_RX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN_PWR);		
-			writeFastConfig(tNRFxxxStatus.unNRFxxxCHN_PWR);
-			#else
+
 			tNRFxxxStatus.unNRFxxxCHN = GET_CHN_PWR_FAST_CONFIG(unCAR_REMOTE_HOPPING_TAB[nHoppingIndex], NRFxxx_POWER);		
 			tNRFxxxStatus.unNRFxxxTxAddr = GET_TX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN);
 			tNRFxxxStatus.unNRFxxxRxAddr = GET_RX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN);		
 			writeConfig(NRFxxx_RF_CH_ADDR_IN_CR, &(tNRFxxxStatus.unNRFxxxCHN), sizeof(tNRFxxxStatus.unNRFxxxCHN));		
-			#endif
+
 			tNRFxxxStatus.unNRFxxxHoppingCNT++;
 			writeTxAddr(tNRFxxxStatus.unNRFxxxTxAddr);
 			writeRxAddr(tNRFxxxStatus.unNRFxxxRxAddr);
 			writeTxPayload(pTxBuff, nTxBuffLen);
 			setNRFxxxMode(NRFxxx_MODE_BURST_TX);
 			tNRFxxxStatus.unNRFxxxSendFrameCNT++;
-			// Timeout or transmit done, I don't care
-			#ifdef NRF905_AS_RF
-			osDelay(2);
-			setNRFxxxMode(NRFxxx_MODE_BURST_RX);
-			#endif
+
 			nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_HOPPING_WAIT_RX_TIME );
 			if( nWaitResult == osOK ) {
 				/* Something received. */
-#ifdef NRF24L01P_AS_RF
 				clearDRFlag();
-#endif
 				readRxPayload(pRxBuff, nRxBuffLen);
 				setNRFxxxMode(tPreMode);
 				tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
@@ -457,6 +429,50 @@ static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff
 	setNRFxxxMode(tPreMode);
 	return (-1);
 }
+
+int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
+	int32_t nWaitResult;
+	nRFxxxMode_t tPreMode;
+	int32_t nResult, nStatusReg, nRxPayloadWidth;
+	
+	if (osMutexWait(nRFxxxOccupyHandle, 500) != osOK) {
+		return (-1);
+	}
+	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
+
+	nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_TX_FIFO, NULL, 0);
+	writeTxPayload(pTxBuff, nTxBuffLen);
+	setNRFxxxMode(NRFxxx_MODE_BURST_TX);
+	tNRFxxxStatus.unNRFxxxSendFrameCNT++;
+
+	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
+	setNRFxxxMode(NRFxxx_MODE_STD_BY);
+	if( nWaitResult == osOK ) {
+		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
+		/* Something received. */
+		nStatusReg = readStatusReg();
+		if ((nStatusReg >= 0) && (NRFxxx_DR_IN_STATUS_REG(nStatusReg) != 0)) {
+			nRxPayloadWidth = readRxPayloadWidth();
+			if ((nRxPayloadWidth > 0) && (nRxPayloadWidth <= 32)) {
+				readRxPayload(pRxBuff, nRxBuffLen);
+			}
+		}
+		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
+		clearDRFlag();
+		setNRFxxxMode(tPreMode);
+		osMutexRelease(nRFxxxOccupyHandle);
+		return 0;
+	} else {
+		/* The call to ulTaskNotifyTake() timed out. */
+		//nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
+		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
+		clearDRFlag();
+		setNRFxxxMode(tPreMode);
+		osMutexRelease(nRFxxxOccupyHandle);
+		return nResult;
+	}
+}
+#endif
 
 int32_t nRFxxxDataReadyHandler(void) {
 	osSemaphoreRelease(DataReadySetHandle);
@@ -483,9 +499,10 @@ static int32_t nRFxxxCRInitial(void) {
 
 uint32_t unSysTickTest;
 void queryCarStatus(void const * argument) {
-	uint8_t unCmd[32]; 
-	uint8_t unReadFrame[sizeof(CarStatus_t)];
 	uint32_t unSysTick;
+	uint8_t unCmd[1+sizeof(unSysTick)]; 
+	uint8_t unReadFrame[sizeof(CarStatus_t)];
+	
 	unCmd[0] = NRFxxx_CMD_GET_STATUS; 
 	unSysTick = HAL_GetTick();
 	memcpy(unCmd + 1, &unSysTick, sizeof(unSysTick)); 

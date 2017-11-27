@@ -377,6 +377,11 @@
           <WinNumber>1</WinNumber>
           <ItemText>unReadConfBuff</ItemText>
         </Ww>
+        <Ww>
+          <count>1</count>
+          <WinNumber>1</WinNumber>
+          <ItemText>unSysTickTest</ItemText>
+        </Ww>
       </WatchWindow1>
       <MemoryWindow1>
         <Mm>
