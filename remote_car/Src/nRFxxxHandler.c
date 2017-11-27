@@ -75,8 +75,8 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRFxxx_CMD_FLUSH_TX_FIFO				0xE1	// flush TX FIFO
 #define NRFxxx_DR_IN_STATUS_REG(status)			((status) & (0x01 << 6))
 
-#define NRFxxx_HOPPING_WAIT_RX_TIME				10
-#define NRFxxx_TX_WAIT_RESP_TIME				20
+#define NRFxxx_HOPPING_WAIT_RX_TIME				5
+#define NRFxxx_TX_WAIT_RESP_TIME				5
 
 #endif
 
@@ -296,11 +296,12 @@ static int32_t writeTxPayload(uint8_t* pBuff, int32_t nBuffLen) {
 	return nRFxxxSPIWrite(NRFxxx_CMD_WTP, pBuff, nBuffLen);
 }
 
+
+
+#ifdef NRF905_AS_RF
 #define GET_CHN_PWR_FAST_CONFIG(x, y) 		((x) | ((y) << 10))
 #define GET_TX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0x5CA259AA)
 #define GET_RX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 16)) & 0xA33D59AA)
-
-#ifdef NRF905_AS_RF
 static int32_t writeFastConfig(uint16_t unPA_PLL_CHN) {
 	uint8_t unSubCmd = (uint8_t)(unPA_PLL_CHN & 0xFF);
 	return nRFxxxSPIWrite(NRFxxx_CMD_CC((uint8_t)(unPA_PLL_CHN >> 8)), &unSubCmd, 1);
@@ -371,6 +372,7 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 	}
 }
 #else
+#define GET_TX_ADDR_FROM_CHN_PWR(x)			(((x) | ((x) << 8) | ((x) << 16) | ((x) << 24)) & 0x5CA259AA)
 static int readRxPayloadWidth(void) {
 	unsigned char unReadBuff;
 	nRFxxxMode_t tPreMode;
@@ -390,35 +392,42 @@ static int clearDRFlag(void) {
 	return writeConfig(NRFxxx_STATUS_ADDR_IN_CR, &unClearDRFlag, 1);
 }
 
+#define SAME_TX_RX_CODE_IN_HOPPING_AND_SEND_FRAME		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_TX_FIFO, NULL, 0);\
+	writeTxPayload(pTxBuff, nTxBuffLen);\
+	setNRFxxxMode(NRFxxx_MODE_BURST_TX);\
+	tNRFxxxStatus.unNRFxxxSendFrameCNT++;\
+	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );\
+	setNRFxxxMode(NRFxxx_MODE_STD_BY);\
+	if( nWaitResult == osOK ) {\
+		nStatusReg = readStatusReg();\
+		if ((nStatusReg >= 0) && (NRFxxx_DR_IN_STATUS_REG(nStatusReg) != 0)) {\
+			nRxPayloadWidth = readRxPayloadWidth();\
+			if ((nRxPayloadWidth > 0) && (nRxPayloadWidth <= 32)) {\
+				readRxPayload(pRxBuff, nRxBuffLen);\
+				tNRFxxxStatus.unNRFxxxRecvFrameCNT++;\
+			}\
+		}
+		
 static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
 	uint8_t nHoppingTimes;
 	uint8_t nHoppingIndex;
 	int32_t nWaitResult;
+	int32_t nStatusReg, nRxPayloadWidth;
 	nRFxxxMode_t tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
 	
 	for (nHoppingTimes = 0; nHoppingTimes < MAX_HOPPING_RETRY_TIMES; nHoppingTimes++) {
 		for (nHoppingIndex = 0; nHoppingIndex < GET_LENGTH_OF_ARRAY(unCAR_REMOTE_HOPPING_TAB); nHoppingIndex++) {
 			setNRFxxxMode(NRFxxx_MODE_STD_BY);
 
-			tNRFxxxStatus.unNRFxxxCHN = GET_CHN_PWR_FAST_CONFIG(unCAR_REMOTE_HOPPING_TAB[nHoppingIndex], NRFxxx_POWER);		
+			tNRFxxxStatus.unNRFxxxCHN = unCAR_REMOTE_HOPPING_TAB[nHoppingIndex];		
 			tNRFxxxStatus.unNRFxxxTxAddr = GET_TX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN);
-			tNRFxxxStatus.unNRFxxxRxAddr = GET_RX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN);		
+			tNRFxxxStatus.unNRFxxxRxAddr = GET_TX_ADDR_FROM_CHN_PWR(tNRFxxxStatus.unNRFxxxCHN);		
 			writeConfig(NRFxxx_RF_CH_ADDR_IN_CR, &(tNRFxxxStatus.unNRFxxxCHN), sizeof(tNRFxxxStatus.unNRFxxxCHN));		
-
-			tNRFxxxStatus.unNRFxxxHoppingCNT++;
 			writeTxAddr(tNRFxxxStatus.unNRFxxxTxAddr);
 			writeRxAddr(tNRFxxxStatus.unNRFxxxRxAddr);
-			writeTxPayload(pTxBuff, nTxBuffLen);
-			setNRFxxxMode(NRFxxx_MODE_BURST_TX);
-			tNRFxxxStatus.unNRFxxxSendFrameCNT++;
-
-			nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_HOPPING_WAIT_RX_TIME );
-			if( nWaitResult == osOK ) {
-				/* Something received. */
-				clearDRFlag();
-				readRxPayload(pRxBuff, nRxBuffLen);
-				setNRFxxxMode(tPreMode);
-				tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
+			tNRFxxxStatus.unNRFxxxHoppingCNT++;
+			// since in send frame and roaming a lot code is the same, use one define to replace them
+			SAME_TX_RX_CODE_IN_HOPPING_AND_SEND_FRAME
 				return 0;
 			} else {
 				
@@ -439,38 +448,18 @@ int32_t nRFxxxSendFrame(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, 
 		return (-1);
 	}
 	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
-
-	nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_TX_FIFO, NULL, 0);
-	writeTxPayload(pTxBuff, nTxBuffLen);
-	setNRFxxxMode(NRFxxx_MODE_BURST_TX);
-	tNRFxxxStatus.unNRFxxxSendFrameCNT++;
-
-	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );
-	setNRFxxxMode(NRFxxx_MODE_STD_BY);
-	if( nWaitResult == osOK ) {
-		tNRFxxxStatus.unNRFxxxRecvFrameCNT++;
-		/* Something received. */
-		nStatusReg = readStatusReg();
-		if ((nStatusReg >= 0) && (NRFxxx_DR_IN_STATUS_REG(nStatusReg) != 0)) {
-			nRxPayloadWidth = readRxPayloadWidth();
-			if ((nRxPayloadWidth > 0) && (nRxPayloadWidth <= 32)) {
-				readRxPayload(pRxBuff, nRxBuffLen);
-			}
-		}
-		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
-		clearDRFlag();
-		setNRFxxxMode(tPreMode);
-		osMutexRelease(nRFxxxOccupyHandle);
-		return 0;
+// since in send frame and roaming a lot code is the same, use one define to replace them
+	SAME_TX_RX_CODE_IN_HOPPING_AND_SEND_FRAME
+		nResult = 0;
 	} else {
 		/* The call to ulTaskNotifyTake() timed out. */
-		//nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
-		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
-		clearDRFlag();
-		setNRFxxxMode(tPreMode);
-		osMutexRelease(nRFxxxOccupyHandle);
-		return nResult;
+		nResult = roamNRFxxx(pTxBuff, nTxBuffLen, pRxBuff, nRxBuffLen);
 	}
+	nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
+	clearDRFlag();
+	setNRFxxxMode(tPreMode);
+	osMutexRelease(nRFxxxOccupyHandle);
+	return nResult;
 }
 #endif
 
@@ -484,8 +473,8 @@ static int32_t nRFxxxCRInitial(void) {
 	return writeConfig(0, NRFxxx_CR_DEFAULT, sizeof(NRFxxx_CR_DEFAULT));
 	#else
 	uint8_t i;
-	writeTxAddr(0x12345678);
-	writeRxAddr(0x12345678);
+//	writeTxAddr(0x12345678);
+//	writeRxAddr(0x12345678);
 	for (i = 0; i < GET_LENGTH_OF_ARRAY(NRFxxx_CR_DEFAULT); i++) {
 		if (writeConfig(NRFxxx_CR_DEFAULT[i].unCRAddress,
 				&(NRFxxx_CR_DEFAULT[i].unCRValues), 1) < 0) {
@@ -524,6 +513,10 @@ static int32_t nRFxxxInitial(void) {
 	osSemaphoreWait( nRFxxxSPIDMACpltHandle, 5 );
 	osSemaphoreWait( DataReadySetHandle, 5 );
 	osDelay(10);
+	#ifdef NRF24L01P_AS_RF
+	nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_TX_FIFO, NULL, 0);
+	nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_RX_FIFO, NULL, 0);
+	#endif
 	nRFxxxCRInitial();
 	for (i = 0; i < GET_LENGTH_OF_ARRAY(unReadConfBuff); i++) {
 		readConfig(i, unReadConfBuff + i, 1);
