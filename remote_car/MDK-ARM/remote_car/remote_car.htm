@@ -3,7 +3,7 @@
 <title>Static Call Graph - [remote_car\remote_car.axf]</title></head>
 <body><HR>
 <H1>Static Call Graph for image remote_car\remote_car.axf</H1><HR>
-<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060528: Last Updated: Mon Nov 27 22:51:42 2017
+<BR><P>#&#060CALLGRAPH&#062# ARM Linker, 5060528: Last Updated: Tue Nov 28 22:26:27 2017
 <BR><P>
 <H3>Maximum Stack Usage =        344 bytes + Unknown(Cycles, Untraceable Function Pointers)</H3><H3>
 Call chain for Maximum Stack Depth:</H3>
@@ -1589,6 +1589,7 @@ Local Symbols
 <BR>[Calls]<UL><LI><a href="#[82]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;writeConfig
 </UL>
 <BR>[Called By]<UL><LI><a href="#[92]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;nRFxxxSendFrame
+<LI><a href="#[98]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;roamNRFxxx
 </UL>
 
 <P><STRONG><a name="[89]"></a>nRFxxxCRInitial</STRONG> (Thumb, 48 bytes, Stack size 8 bytes, nrfxxxhandler.o(i.nRFxxxCRInitial))
@@ -1687,7 +1688,7 @@ Local Symbols
 <LI><a href="#[98]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;roamNRFxxx
 </UL>
 
-<P><STRONG><a name="[98]"></a>roamNRFxxx</STRONG> (Thumb, 286 bytes, Stack size 56 bytes, nrfxxxhandler.o(i.roamNRFxxx))
+<P><STRONG><a name="[98]"></a>roamNRFxxx</STRONG> (Thumb, 298 bytes, Stack size 56 bytes, nrfxxxhandler.o(i.roamNRFxxx))
 <BR><BR>[Stack]<UL><LI>Max Depth = 256<LI>Call Chain = roamNRFxxx &rArr; writeTxAddr &rArr; writeConfig &rArr; nRFxxxSPIWrite &rArr; nRFxxxSPIDataRW &rArr; osSemaphoreWait &rArr; xQueueGenericReceive &rArr; vTaskPlaceOnEventList &rArr; prvAddCurrentTaskToDelayedList &rArr; vListInsert
 </UL>
 <BR>[Calls]<UL><LI><a href="#[8c]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;osSemaphoreWait
@@ -1700,6 +1701,7 @@ Local Symbols
 <LI><a href="#[96]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;readRxPayloadWidth
 <LI><a href="#[97]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;readRxPayload
 <LI><a href="#[8d]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;nRFxxxSPIWrite
+<LI><a href="#[81]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;clearDRFlag
 </UL>
 <BR>[Called By]<UL><LI><a href="#[92]">&gt;&gt;</a>&nbsp;&nbsp;&nbsp;nRFxxxSendFrame
 </UL>
