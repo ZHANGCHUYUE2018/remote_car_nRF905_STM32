@@ -257,13 +257,10 @@ static int32_t readConfig(uint8_t unConfigAddr, uint8_t* pBuff, int32_t nBuffLen
 
 static int readStatusReg(void) {
 	int nResult;
-	nRFxxxMode_t tPreMode;
-	unsigned char unStatus;
-
-	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
-	setNRFxxxMode(NRFxxx_MODE_STD_BY);
-	nResult = nRFxxxSPIRead(NRFxxx_CMD_RC(1), &unStatus, sizeof(unStatus));
-	setNRFxxxMode(tPreMode);
+	uint8_t unStatus, unDummy;
+	
+	unDummy = NRFxxx_CMD_RC(1);
+	nResult = nRFxxxSPIDataRW(&NRFxxx_SPI_CHN, &unDummy, &unStatus, 1);
 	if (0 <= nResult) {
 		return unStatus;
 	} else {
@@ -409,12 +406,12 @@ static int clearDRFlag(void) {
 				tNRFxxxStatus.unNRFxxxRecvFrameCNT++;\
 			}\
 		}
-		
+int32_t nStatusReg, nRxPayloadWidth;
 static int32_t roamNRFxxx(uint8_t* pTxBuff, int32_t nTxBuffLen, uint8_t* pRxBuff, int32_t nRxBuffLen) {
 	uint8_t nHoppingTimes;
 	uint8_t nHoppingIndex;
 	int32_t nWaitResult;
-	int32_t nStatusReg, nRxPayloadWidth;
+	
 	nRFxxxMode_t tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
 	
 	for (nHoppingTimes = 0; nHoppingTimes < MAX_HOPPING_RETRY_TIMES; nHoppingTimes++) {
