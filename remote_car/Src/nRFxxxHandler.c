@@ -49,7 +49,7 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRFxxx_CMD_CC(unPwrChn)					((unPwrChn) | 0x8000)
 #define CH_MSK_IN_CC_REG						0x01FF
 #define NRFxxx_DR_IN_STATUS_REG(status)			((status) & (0x01 << 5))
-
+#define NRFxxx_CMD_READ_STATUS					NRFxxx_CMD_RC(1)
 #define NRFxxx_HOPPING_WAIT_RX_TIME				50
 #define NRFxxx_TX_WAIT_RESP_TIME				50
 
@@ -74,7 +74,7 @@ extern osSemaphoreId DataReadySetHandle;
 #define NRFxxx_CMD_FLUSH_RX_FIFO				0xE2	// flush RX FIFO
 #define NRFxxx_CMD_FLUSH_TX_FIFO				0xE1	// flush TX FIFO
 #define NRFxxx_DR_IN_STATUS_REG(status)			((status) & (0x01 << 6))
-
+#define NRFxxx_CMD_READ_STATUS					0xFF
 #define NRFxxx_HOPPING_WAIT_RX_TIME				10
 #define NRFxxx_TX_WAIT_RESP_TIME				10
 
@@ -148,7 +148,7 @@ typedef struct _nRFxxxInitCR {
 //static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{1, 0x01},
 //		{2, 0x01}, {4, 0x1A}, {5, 40}, {6, 0x0F}, {0, 0x3E}};
 static const nRFxxxInitCR_t NRFxxx_CR_DEFAULT[] = {{0, 0x5E}, {1, 0x01},
-		{2, 0x01}, {3, 0x02}, {4, 0x14}, {5, 40}, {6, 0x0F}, {7, 0x70},
+		{2, 0x01}, {3, 0x02}, {4, 0x24}, {5, 40}, {6, 0x08}, {7, 0x70},
 		{28, 0x01}, {29, 0x06}};
 #endif
 
@@ -259,7 +259,7 @@ static int readStatusReg(void) {
 	int nResult;
 	uint8_t unStatus, unDummy;
 	
-	unDummy = NRFxxx_CMD_RC(1);
+	unDummy = NRFxxx_CMD_READ_STATUS;
 	nResult = nRFxxxSPIDataRW(&NRFxxx_SPI_CHN, &unDummy, &unStatus, 1);
 	if (0 <= nResult) {
 		return unStatus;
@@ -377,7 +377,7 @@ static int readRxPayloadWidth(void) {
 
 	tPreMode = tNRFxxxStatus.tNRFxxxCurrentMode;
 	setNRFxxxMode(NRFxxx_MODE_STD_BY);
-	if (nRFxxxSPIRead(NRFxxx_CMD_RRPW, &unReadBuff, sizeof(unReadBuff)) > 0) {
+	if (nRFxxxSPIRead(NRFxxx_CMD_RRPW, &unReadBuff, sizeof(unReadBuff)) >= 0) {
 		setNRFxxxMode(tPreMode);
 		return unReadBuff;
 	} else {
@@ -386,19 +386,30 @@ static int readRxPayloadWidth(void) {
 	}
 }
 static int clearDRFlag(void) {
-	static const uint8_t unClearDRFlag = 0x70;
+	static const uint8_t unClearDRFlag = 0x50;
+	return writeConfig(NRFxxx_STATUS_ADDR_IN_CR, &unClearDRFlag, 1);
+}
+
+static int clearDSFlag(void) {
+	static const uint8_t unClearDRFlag = 0x30;
+	return writeConfig(NRFxxx_STATUS_ADDR_IN_CR, &unClearDRFlag, 1);
+}
+
+static int clearStatusFlag(uint8_t unStatus) {
+	uint8_t unClearDRFlag = unStatus;
 	return writeConfig(NRFxxx_STATUS_ADDR_IN_CR, &unClearDRFlag, 1);
 }
 
 #define SAME_TX_RX_CODE_IN_HOPPING_AND_SEND_FRAME		nRFxxxSPIWrite(NRFxxx_CMD_FLUSH_TX_FIFO, NULL, 0);\
 	writeTxPayload(pTxBuff, nTxBuffLen);\
-	clearDRFlag();\
+	clearDSFlag();\
 	setNRFxxxMode(NRFxxx_MODE_BURST_TX);\
 	tNRFxxxStatus.unNRFxxxSendFrameCNT++;\
 	nWaitResult = osSemaphoreWait( DataReadySetHandle, NRFxxx_TX_WAIT_RESP_TIME );\
 	setNRFxxxMode(NRFxxx_MODE_STD_BY);\
 	if( nWaitResult == osOK ) {\
 		nStatusReg = readStatusReg();\
+		clearStatusFlag(nStatusReg);\
 		if ((nStatusReg >= 0) && (NRFxxx_DR_IN_STATUS_REG(nStatusReg) != 0)) {\
 			nRxPayloadWidth = readRxPayloadWidth();\
 			if ((nRxPayloadWidth > 0) && (nRxPayloadWidth <= 32)) {\
